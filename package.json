@@ -1,0 +1,11 @@
+{
+  "name": "crate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static, no-build music-collection tracker with cover-art lookup and cloud source sync.",
+  "scripts": {
+    "start": "python3 -m http.server 8000",
+    "test": "node tests/run.mjs"
+  },
+  "license": "MIT"
+}

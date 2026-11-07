@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Crate tests</title><pre id="out"></pre>
+<script type="module">
+import { cases as base } from './cases.js';
+import { parserCases } from './parser-cases.js';
+import { providerCases } from './provider-cases.js';
+const cases = [...base, ...parserCases, ...providerCases];
+const out = document.getElementById('out'); let failed = 0;
+for (const [name, fn] of cases) { try { await fn(); out.textContent += `ok   ${name}\n`; } catch (e) { failed++; out.textContent += `FAIL ${name} - ${e.message}\n`; } }
+out.textContent += `${cases.length - failed}/${cases.length} passed\n`;
+</script>

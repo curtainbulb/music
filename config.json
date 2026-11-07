@@ -1,0 +1,10 @@
+{
+  "source": "",
+  "oauth": {
+    "dropbox": { "clientId": "" },
+    "onedrive": { "clientId": "" },
+    "google": { "clientId": "" },
+    "pcloud": { "clientId": "" },
+    "box": { "clientId": "" }
+  }
+}

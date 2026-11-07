@@ -1,0 +1,28 @@
+<!doctype html><meta charset="utf-8"><title>Crate cover benchmark</title>
+<body style="font:14px system-ui;max-width:760px;margin:2rem auto;padding:0 1rem">
+<h1>Cover benchmark</h1>
+<p>Choose an albums file (.md, .csv, .json). Up to 300 albums are sampled (seeded shuffle), run cold then warm against a fresh cache. Run this over http(s) in Chrome.</p>
+<input type="file" id="f" accept=".md,.markdown,.txt,.csv,.tsv,.json,.opml"><pre id="out"></pre>
+<script type="module">
+import { importText } from '../js/parser/formats.js';
+import { createProviders } from '../js/covers/providers.js';
+import { createCoverCache } from '../js/covers/cache.js';
+import { createCoverService } from '../js/covers/service.js';
+const out = document.getElementById('out'), pct = (a, p) => a.length ? [...a].sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * p))].toFixed(0) : 'n/a';
+function sample(albums, n) { let seed = 7; const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296; return albums.map((a) => [rnd(), a]).sort((x, y) => x[0] - y[0]).slice(0, n).map((x) => x[1]); }
+async function run(label, albums, cache) {
+  const svc = createCoverService({ providers: createProviders(), cache });
+  const times = [], t0 = performance.now(); let found = 0;
+  await Promise.all(albums.map((a) => new Promise((done) => { const s = performance.now(); svc.want(a, (url) => { if (url) { found++; times.push(performance.now() - s); } done(); }, 1); })));
+  const total = svc.stats, lines = Object.entries(total).map(([n, x]) => `  ${n.padEnd(12)} hits ${x.hits} (${(100 * x.hits / albums.length).toFixed(1)}%) · no match ${x.misses} · errors ${x.errors}`);
+  out.textContent += `\n${label}: ${found}/${albums.length} covers (${(100 * found / albums.length).toFixed(1)}%) in ${((performance.now() - t0) / 1000).toFixed(1)} s\n  time-to-cover p50 ${pct(times, 0.5)} ms · p95 ${pct(times, 0.95)} ms\n${lines.join('\n')}\n`;
+}
+document.getElementById('f').addEventListener('change', async (e) => {
+  const file = e.target.files[0]; out.textContent = '';
+  const albums = sample(importText(file.name, await file.text()).albums, 300);
+  out.textContent = `${albums.length} albums sampled${albums.length < 300 ? ' (fewer than 300 available: results are not spec-grade)' : ''}\nUA: ${navigator.userAgent}\n`;
+  const cache = createCoverCache(`bench-${Date.now()}`);
+  await run('COLD', albums, cache);
+  await run('WARM', albums, cache);
+});
+</script>

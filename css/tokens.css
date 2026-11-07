@@ -1,0 +1,11 @@
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+  --radius-1: 8px; --radius-2: 12px; --radius-3: 16px; --radius-pill: 999px;
+  --elev-1: 0 1px 2px rgb(0 0 0 / .18); --elev-2: 0 6px 18px rgb(0 0 0 / .28); --elev-3: 0 16px 40px rgb(0 0 0 / .38);
+  --dur-1: 120ms; --dur-2: 200ms; --dur-3: 320ms;
+  --ease-out: cubic-bezier(.2, .8, .2, 1); --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --spring: linear(0, .42 9%, .9 22%, 1.06 34%, 1.02 48%, 1 62%, 1);
+  --text-sm: clamp(.8rem, .78rem + .1vw, .875rem); --text-md: clamp(.95rem, .92rem + .15vw, 1.05rem); --text-lg: clamp(1.15rem, 1.05rem + .5vw, 1.5rem);
+  --touch: 44px; --content-max: 2200px;
+}
+@media (prefers-reduced-motion: reduce) { :root { --dur-1: 0ms; --dur-2: 0ms; --dur-3: 0ms; } }
