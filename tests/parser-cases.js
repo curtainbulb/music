@@ -3,7 +3,7 @@ import { toCsv, toMarkdown, toJson } from '../js/parser/export.js';
 import { normalizeShareUrl } from '../js/sources/links.js';
 import { diffAlbums, hasDiff, summarize } from '../js/ui/patch.js';
 import { splitDualTitle } from '../js/covers/matcher.js';
-import { pickByPriority, PRIORITY } from '../js/covers/service.js';
+import { pickByPriority, PRIORITY, createCoverService } from '../js/covers/service.js';
 import { detectKeyProvider, checkSynopsis, synopsisStub } from '../js/ai/smartpicks.js';
 import { pickAutoFile } from '../js/sources/autodetect.js';
 
@@ -161,5 +161,31 @@ export const parserCases = [
     eq(shouldSkipDefaultLoad('', '', 'https://example.com/a.md'), true, '?src= pointing at https defers to extras.js');
     eq(shouldSkipDefaultLoad('', '', 'albums.md'), false, 'a plain relative ?src= is still the local default path');
     eq(shouldSkipDefaultLoad('', '', 'http://example.com/a.md'), false, 'plain http (not https) is not treated as a cloud source');
+  }],
+  ['createCoverService: a jump-priority (sheet-open) request preempts a slower background fetch instead of queueing behind it', async () => {
+    // Every concurrency slot (2, to keep the test small) is filled with a provider that never resolves on
+    // its own — only an abort ends it. A third, jump-priority want() then arrives for a different album.
+    // Without preemption this hangs until the 400ms test timeout below; with it, the hung slot is aborted
+    // and the jump request's own (fast) provider answers almost immediately.
+    // Every album except 'clicked' hangs forever on this provider (only an abort ends it); 'clicked'
+    // resolves immediately, standing in for a real provider answering a real network request.
+    const hangers = [];
+    const provider = { name: 'mixed', limiter: { isOpen: () => false, acquire: async () => {}, success() {}, failure() {} },
+      find: (album, signal) => {
+        if (album.id === 'clicked') return Promise.resolve([{ title: album.title, artist: album.artist, url: 'https://example.com/cover.jpg' }]);
+        return new Promise((resolve, reject) => { hangers.push(album.id); signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))); });
+      } };
+    const memCache = new Map();
+    const cache = { get: async (id) => memCache.get(id) ?? null, putHit: async (e) => memCache.set(e.id, { url: e.url }), putMiss: async () => {}, peek: () => null, put: () => {}, clearMisses: () => {} };
+    const svc = createCoverService({ providers: [provider], cache, concurrency: 2, timeoutMs: 60000 });
+    svc.want({ id: 'bg-1', title: 'bg-1', artist: 'x' }, () => {}, PRIORITY.visible);
+    svc.want({ id: 'bg-2', title: 'bg-2', artist: 'x' }, () => {}, PRIORITY.visible);
+    await new Promise((r) => setTimeout(r, 10)); // let pump() actually start both (run() is async)
+    eq(hangers.length, 2, 'both background requests actually started (occupying both concurrency slots)');
+    const jumpResult = await Promise.race([
+      new Promise((resolve) => svc.want({ id: 'clicked', title: 'clicked', artist: 'x' }, resolve, PRIORITY.jump)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('jump request never got a slot (no preemption)')), 400)),
+    ]);
+    eq(jumpResult, 'https://example.com/cover.jpg', 'the clicked album\'s own cover resolves even though both slots were full of hung background requests');
   }],
 ];

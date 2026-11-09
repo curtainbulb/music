@@ -75,27 +75,24 @@ const GENRE_HUE = [
   { k: /RAP/, hue: 14, m: 'block' }, { k: /POP|NEW WAVE|BRIT/, hue: 330, m: 'dot' },
   { k: /INDIE|EMO|POST|SHOEGAZE|NOISE|MATH/, hue: 150, m: 'wave' }, { k: /PROG/, hue: 255, m: 'orbit' }, { k: /./, hue: 215, m: 'stripe' },
 ];
+/**
+ * Placeholder tile shown until a real cover loads (or in its place, if none is ever found). Deliberately
+ * quiet: a flat, muted, per-genre tint plus the artist/title text, with no decorative pattern. An earlier
+ * version drew loud diagonal gradients and per-genre shapes (spikes, orbits, grids...) at near-full
+ * saturation/opacity — striking in isolation, but wrong for something shown on every one of a few hundred
+ * cards, most of which never get replaced by real art because this sandbox cannot reach any cover
+ * provider (see docs/DEVLOG.md). A loading/fallback state that loud reads as "the real design", not as
+ * a placeholder, which is the complaint this redraw answers. Genre still maps to a hue (so the grid keeps
+ * some at-a-glance color variety) but at low saturation/opacity so it recedes rather than competes with
+ * the title text or, once one arrives, the real cover art fading in on top of it.
+ */
 function drawPoster(canvas, a, S_) {
-  const rnd = mulberry32(hashStr(a.artist + '|' + a.title)), fam = GENRE_HUE.find((g) => g.k.test(a.section || ''));
-  const hue = (fam.hue + (a.year ? ((a.year - 1960) % 60) / 60 * 40 - 20 : 0) + 360) % 360, k = S_ / 240;
+  const fam = GENRE_HUE.find((g) => g.k.test(a.section || ''));
+  const hue = (fam.hue + (a.year ? ((a.year - 1960) % 60) / 60 * 20 - 10 : 0) + 360) % 360, k = S_ / 240;
   canvas.width = canvas.height = S_; const ctx = canvas.getContext('2d'); ctx.scale(k, k); const W = 240;
-  const h2 = (hue + 40 + rnd() * 40) % 360, g = ctx.createLinearGradient(0, 0, W, W * (.6 + rnd() * .8));
-  g.addColorStop(0, `hsl(${h2} 65% ${28 + rnd() * 10}%)`); g.addColorStop(1, `hsl(${hue} 55% ${12 + rnd() * 8}%)`);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, W); ctx.globalAlpha = .85;
-  const c1 = `hsl(${(hue + 150) % 360} 70% ${55 + rnd() * 15}%)`, c2 = `hsl(${(hue + 20) % 360} 80% 65%)`;
-  switch (fam.m) {
-    case 'orbit': for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.strokeStyle = i % 2 ? c1 : c2; ctx.lineWidth = 2 + rnd() * 3; ctx.arc(W / 2 + (rnd() - .5) * 30, W / 2 + (rnd() - .5) * 30, 40 + i * 34 + rnd() * 10, 0, 6.283); ctx.stroke(); } break;
-    case 'spike': { ctx.fillStyle = c1; const n = 7 + Math.floor(rnd() * 5); for (let i = 0; i < n; i++) { const x = i / n * W, h = 40 + rnd() * 160; ctx.beginPath(); ctx.moveTo(x, W); ctx.lineTo(x + W / n * .5, W - h); ctx.lineTo(x + W / n, W); ctx.fill(); } break; }
-    case 'shard': for (let i = 0; i < 6; i++) { ctx.fillStyle = i % 2 ? c1 : c2; ctx.save(); ctx.translate(rnd() * W, rnd() * W); ctx.rotate(rnd() * 3.14); const w = 30 + rnd() * 70; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(w, 8); ctx.lineTo(w * .7, -w * .6); ctx.fill(); ctx.restore(); } break;
-    case 'grid': { const c = 20 + rnd() * 16; ctx.strokeStyle = c1; ctx.lineWidth = 1.5; ctx.globalAlpha = .5; for (let x = 0; x < W; x += c) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, W); ctx.stroke(); } for (let y = 0; y < W; y += c) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); } ctx.globalAlpha = .9; ctx.fillStyle = c2; ctx.beginPath(); ctx.arc(W * rnd(), W * rnd(), 20 + rnd() * 30, 0, 6.283); ctx.fill(); break; }
-    case 'block': { const n = 4 + Math.floor(rnd() * 3); for (let i = 0; i < n; i++) { ctx.fillStyle = i % 2 ? c1 : c2; ctx.fillRect(i * W / n, W * (.3 + rnd() * .5), W / n - 4, W); } break; }
-    case 'arc': for (let i = 0; i < 4; i++) { ctx.strokeStyle = i % 2 ? c1 : c2; ctx.lineWidth = 10 + rnd() * 14; ctx.beginPath(); ctx.arc(W / 2, W * 1.1, 60 + i * 36, 3.14159, 6.283); ctx.stroke(); } break;
-    case 'dot': for (let i = 0; i < 22; i++) { ctx.fillStyle = i % 2 ? c1 : c2; ctx.globalAlpha = .4 + rnd() * .5; ctx.beginPath(); ctx.arc(rnd() * W, rnd() * W, 6 + rnd() * 22, 0, 6.283); ctx.fill(); } break;
-    case 'wave': ctx.strokeStyle = c1; ctx.lineWidth = 3; for (let w = 0; w < 3; w++) { ctx.beginPath(); for (let x = 0; x <= W; x += 8) { const y = W * (.3 + w * .22) + Math.sin(x * .04 + w) * 18 * rnd(); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); } ctx.stroke(); } break;
-    default: { const n = 5 + Math.floor(rnd() * 4); for (let i = 0; i < n; i++) { ctx.fillStyle = i % 2 ? c1 : c2; ctx.globalAlpha = .55; ctx.save(); ctx.translate(W / 2, W / 2); ctx.rotate(rnd() * .6 - .3); ctx.fillRect(-W, (i - n / 2) * (W / n), W * 2, W / n * .6); ctx.restore(); } }
-  }
-  ctx.globalAlpha = 1;
-  const vg = ctx.createLinearGradient(0, W * .45, 0, W); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.7)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, W);
+  ctx.fillStyle = `hsl(${hue} 22% 16%)`; ctx.fillRect(0, 0, W, W);
+  ctx.fillStyle = `hsl(${hue} 30% 22%)`; ctx.beginPath(); ctx.arc(W * .74, W * .22, W * .52, 0, 6.283); ctx.fill();
+  const vg = ctx.createLinearGradient(0, W * .5, 0, W); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.62)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, W);
   const wrap = (text, max, maxLines) => {
     const ws = text.split(/\s+/), out = []; let cur = '';
     for (const w of ws) { const t = cur ? cur + ' ' + w : w; if (ctx.measureText(t).width > max && cur) { out.push(cur); cur = w; } else cur = t; }

@@ -535,3 +535,90 @@ depended on.
 ### Tests
 `node tests/run.mjs`: **36/36 passing**, unchanged from Slice 10 — this slice is pure UI/DOM wiring with no
 new pure logic to extract. `grep -rn innerHTML js/ index.html sw.js`: zero matches.
+
+## Slice 12 — visual/UX bug pass after real user feedback
+
+Slice 11 verified every piece of new logic correctly in a sandboxed browser, but the sandbox's egress
+proxy blocks every cover-art provider host — meaning no one, including this project, had ever actually
+*looked at* the app with real cover art, or looked closely at the detail sheet on a normal-width desktop
+screen. The user did, and reported: the detail popup's proportions are wrong, nav/close buttons visually
+clutter the poster, placeholder covers are loud and look like a permanent broken state rather than a
+loading state, cover loading stalls and doesn't prioritize the album you actually clicked, and the UI is
+rough generally. This slice is a direct response — six concrete, visually-confirmed fixes, no speculative
+scope added.
+
+### 1. Detail sheet was a bottom-sheet shape on every viewport, including desktop
+`index.html`'s `.sheet` rule had one layout for all widths: `position:fixed; bottom:0; max-width:520px`,
+a mobile bottom-sheet pattern. On a 1280px desktop viewport this produces a narrow 520px column floating
+in the middle of a dimmed screen — which reads as broken, not designed, confirmed by screenshot. **Fixed**:
+added a `@media (min-width:720px)` block that switches `.sheet` to a centered dialog (`top:50%; left:50%`,
+`880px` wide, rounded on all corners) with a two-column grid (`sheet-body`: poster | text) instead of the
+stacked mobile layout. Verified both layouts in Playwright screenshots at 1280×900 and 390×844.
+
+### 2. Prev/next/close buttons floated directly on top of the poster image
+All three were `position:absolute` at `top:14px`, with no scrim behind them, sitting directly on the art —
+confirmed visually cluttering every sheet open. **Fixed**: moved them into a proper `.sheet-header` row
+(nav buttons grouped left, close right) above the poster, `position:static`, no overlap possible by
+construction. Verified by screenshot on both viewport sizes.
+
+### 3. Placeholder covers were loud, high-contrast generative art, not a loading state
+The old `drawPoster()` drew per-genre diagonal gradients plus one of eight decorative shape patterns
+(spikes, orbits, shards, grids...) at near-full saturation and opacity — visually striking in isolation,
+but wrong to show on every one of a few hundred cards, especially since real art can never load in this
+sandbox (confirmed: `curl` to itunes.apple.com, api.deezer.com, musicbrainz.org, coverartarchive.org and
+en.wikipedia.org all fail at the proxy before even reaching those hosts — this is an environment
+limitation, not a bug this project can fix). A placeholder that loud reads as the real design. **Fixed**:
+replaced with a flat, muted per-genre tint (low saturation, one soft circular highlight, no shape pattern)
+that recedes visually instead of competing with the title text or a real cover once one does load.
+`mulberry32`/`hashStr` are kept (still used by `recommend()`'s tie-breaking jitter) but no longer drive
+poster art. Verified by screenshot.
+
+### 4. Cover fetch timeout was long enough to make loading look hung
+`createCoverService`'s default `timeoutMs` was 6000ms, and a single album lookup can try up to ~6
+providers sequentially per title candidate across up to 2 title candidates before giving up — a worst case
+well over a minute with no visible end state, which is exactly "it's not fast enough and just stops
+loading." **Fixed**: dropped the default to 3500ms. This doesn't fix network reachability (still blocked
+in this sandbox, see above) but caps how long a real-world slow/unresponsive provider can stall the whole
+chain.
+
+### 5. The album you clicked didn't actually jump the queue if it was already full
+`want()` already enqueued a sheet-open request at `PRIORITY.jump` (0, the highest priority), and
+`takeNext()`/`pickByPriority()` correctly picked it first among *queued* work — but neither function could
+preempt requests that were already *running*. With `concurrency` at its default of 5, scrolling a grid
+first (filling all 5 slots with background-tier fetches) and then opening a sheet meant the clicked
+album's own cover sat behind up to 5 in-flight requests, each up to the full timeout, before starting —
+the opposite of "load the one I clicked first." **Fixed**: `pump()` now checks, after dispatching whatever
+it can, whether the next queued item is jump-priority and every slot is full; if so it aborts the
+longest-waiting lower-priority *running* request (`worstRunning()`) to free a slot immediately. The
+aborted request is correctly put back in the queue (not settled with a false "miss") if it's still wanted,
+via a check in `run()`'s abort branch. **Verified with a real integration test** (not a browser demo, for
+the reasons above) in `tests/parser-cases.js`: two provider calls are made to hang indefinitely except for
+one album id, both concurrency slots are deliberately filled with hanging requests, then a `PRIORITY.jump`
+want() for the one non-hanging id is raced against a 400ms "no preemption happened" timeout — it resolves
+correctly, proving the preemption path actually works end-to-end against the real `createCoverService`,
+not a mock of it.
+
+### 6. Mobile layout overflow: topbar icons cut off, sheet action row overflowed horizontally
+Two separate overflow bugs, both confirmed by screenshot at 390×844 and by `scrollWidth`/`clientWidth`
+measurement in Playwright: the topbar's 7 icon buttons sat in one `flex` row with no wrap, overflowing past
+the viewport edge; and `.sheet-actions` (which has grown to 7 buttons across prior slices: own, more-by,
+use-my-cover, cover-from-url, retry, synopsis, change-poster) was a single non-wrapping flex row, cutting
+off "Retry covers" at the viewport edge. **Fixed**: wrapped the topbar icons in a `.topbar-actions` flex
+container with `flex-wrap:wrap`; split the sheet actions into a primary row (`Add to crate` / `More by
+artist`, kept non-wrapping, 2 buttons) and a new `.sheet-actions-utility` row for the other 5
+(`flex-wrap:wrap`, smaller font/padding since these are secondary actions). Verified post-fix:
+`scrollWidth === clientWidth` on `.sheet-actions-utility` at 390px, confirmed by direct measurement, not
+just visual inspection.
+
+### Honestly unverified (same root cause as Slice 11, not new)
+Real cover-provider responses: still architecturally impossible to test here, confirmed again this slice by
+direct `curl` against all five provider hosts (connection failures at the proxy, not at the provider — this
+sandbox's network allowlist does not include them). This means the placeholder-vs-real-art *transition* —
+whether a real photo fades in cleanly over the quieter placeholder, whether the aspect ratio/crop looks
+right for a real square album cover — has still never been seen by anyone, including this project. If art
+still looks wrong once real covers load in a real browser with network access, that needs its own
+follow-up with actual photos, not sandbox-blocked fakes.
+
+### Tests
+`node tests/run.mjs`: **37/37 passing** (36 from Slice 10 + 1 new preemption integration test).
+`grep -rn innerHTML js/ index.html sw.js`: zero matches.

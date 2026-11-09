@@ -20,9 +20,10 @@ export function pickByPriority(queue) {
  * Transient failure (every provider errored) settles null WITHOUT caching a miss.
  * Needs AbortSignal.any / AbortSignal.timeout (Chrome 116+, Safari 17.4+, Firefox 124+).
  */
-export function createCoverService({ providers, cache, concurrency = 5, threshold = 0.72, timeoutMs = 6000, onChange = () => {} }) {
+export function createCoverService({ providers, cache, concurrency = 5, threshold = 0.72, timeoutMs = 3500, onChange = () => {} }) {
   const waiters = new Map();
   let queue = [], active = 0, idleScheduled = false, idleOpen = false;
+  const running = new Set(); // waiters currently in run(), for jump-priority preemption
   const stats = Object.fromEntries(providers.map((p) => [p.name, { hits: 0, misses: 0, errors: 0 }]));
   const emit = () => onChange({ queued: queue.length, active, stats });
 
@@ -107,10 +108,26 @@ export function createCoverService({ providers, cache, concurrency = 5, threshol
   const settle = (w, url) => { waiters.delete(w.album.id); for (const cb of w.cbs) cb(url); };
 
   async function run(w) {
-    active++; w.controller = new AbortController(); emit();
+    active++; running.add(w); w.controller = new AbortController(); emit();
     try { settle(w, await resolve(w.album, w.controller.signal)); }
-    catch { if (!w.controller.signal.aborted) settle(w, null); }
-    finally { active--; w.controller = null; emit(); pump(); }
+    catch {
+      // An abort from preemption (see pump()) is not a real miss: put w back in the queue instead of
+      // settling it with null, unless unwant() already removed it from `waiters` (nothing left to serve).
+      if (w.controller.signal.aborted) { if (waiters.has(w.album.id) && !queue.includes(w)) queue.push(w); }
+      else settle(w, null);
+    }
+    finally { active--; running.delete(w); w.controller = null; emit(); pump(); }
+  }
+
+  /** The waiter among currently-running requests with the highest (worst) priority number, or null if
+   * every running request already has priority <= maxPriority (nothing worth bumping). Ties go to
+   * whichever running waiter was found first (Set iteration order = insertion order = oldest first), so a
+   * preemption prefers interrupting the request that has had the longest head start on a background tier,
+   * not the one that just started. */
+  function worstRunning(maxPriority) {
+    let found = null;
+    for (const w of running) if (w.priority > maxPriority && (!found || w.priority > found.priority)) found = w;
+    return found;
   }
 
   function pump() {
@@ -122,6 +139,20 @@ export function createCoverService({ providers, cache, concurrency = 5, threshol
         break;
       }
       run(w);
+    }
+    // A jump-priority (sheet-open) request waiting at the front of the queue with every concurrency slot
+    // full of lower-priority background fetches would otherwise sit behind up to `concurrency` in-flight
+    // timeouts before it even starts a network request. Preempt one: abort the longest-waiting worse-
+    // priority running request so the jump request gets a slot immediately. The aborted request's own
+    // provider loop treats this exactly like a timeout (resolve()'s catch path), settling its own waiters
+    // with null rather than leaving them stuck — it will simply be re-queued and retried on the next pump
+    // if it's still wanted (its callbacks are still registered; see want()/unwant()).
+    if (active >= concurrency && queue.length) {
+      const nextPick = pickByPriority(queue);
+      if (queue[nextPick].priority === PRIORITY.jump) {
+        const victim = worstRunning(PRIORITY.jump);
+        if (victim) victim.controller?.abort();
+      }
     }
   }
 

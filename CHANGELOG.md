@@ -100,3 +100,16 @@ explicitly left unwired ("needs a browser to judge, not a logic gap") were wired
 No new pure logic was added (all four are DOM/async wiring), so `node tests/run.mjs` stays at 36/36 and
 `grep -rn innerHTML` stays at zero matches. Full detail, including exact verification steps and honestly
 unverified gaps, is in docs/DEVLOG.md "Slice 11".
+
+## Slice 12 — UX/visual fixes after real user review
+Full detail and verification specifics in docs/DEVLOG.md "Slice 12".
+- Detail sheet: proper centered dialog on desktop (≥720px) instead of a stretched mobile bottom-sheet shape.
+- Detail sheet: nav/close buttons moved off the poster image into a header row (no more overlap).
+- Placeholder cover art: replaced loud per-genre gradient/shape art with a quiet, muted tint — reads as a
+  loading state, not a permanent design.
+- Cover fetch timeout cut from 6000ms to 3500ms.
+- Cover queue: a sheet-open (priority "jump") request now preempts an already-running lower-priority fetch
+  when every concurrency slot is full, instead of waiting behind it — verified with a real integration test.
+- Mobile layout: topbar icons wrap instead of overflowing; sheet action buttons split into a primary row and
+  a wrapping secondary row instead of one overflowing row.
+- Tests: 37/37 passing (36 + 1 new).

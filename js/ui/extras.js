@@ -403,7 +403,7 @@ pcDlg.addEventListener('click', (e) => { if (e.target === e.currentTarget) e.cur
 onSheetCoverMiss((a) => { curAlbum = a; });
 $('#sheetCoverMissBtn')?.addEventListener('click', () => { if (curAlbum) openPosterChoice(curAlbum); });
 
-document.querySelector('.sheet-actions').append(
+document.querySelector('#sheetActionsUtility').append(
   el('button', { class: 'btn ghost', type: 'button', onclick: () => curAlbum && coverPicker.click() }, 'Use my cover'),
   el('button', { class: 'btn ghost', type: 'button', onclick: coverFromUrl }, 'Cover from URL'),
   el('button', { class: 'btn ghost', type: 'button', onclick: () => { const a = curAlbum; if (a) changeCover(a, () => Art.retry(a.id), 'Retrying cover'); } }, 'Retry cover'),

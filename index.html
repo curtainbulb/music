@@ -49,8 +49,10 @@ button{cursor:pointer;}
   backdrop-filter:saturate(180%) blur(18px); -webkit-backdrop-filter:saturate(180%) blur(18px);
   border-bottom:1px solid transparent; transition:border-color .25s, box-shadow .25s;}
 .topbar.scrolled{border-color:var(--stroke); box-shadow:var(--elev-1);}
-.topbar-row{display:flex; align-items:center; gap:10px;}
-.brand{flex:1; min-width:0;}
+.topbar-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.topbar-actions{display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end;}
+.brand{flex:1; min-width:140px;}
+.brand small{display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .brand h1{font-size:22px; font-weight:800;}
 .brand small{color:var(--text2); font-size:12.5px; font-weight:500;}
 .icon-btn{width:38px; height:38px; border-radius:50%; display:grid; place-items:center; flex:none;
@@ -134,19 +136,39 @@ body.dense .card-artist, body.dense .card-year{font-size:10.5px;}
 
 .scrim{position:fixed; inset:0; background:rgba(0,0,0,.5); opacity:0; pointer-events:none; transition:opacity .25s; z-index:90;}
 .scrim.open{opacity:1; pointer-events:auto;}
+/* Mobile default: a bottom sheet pinned to the viewport edge, full width up to 520px. */
 .sheet{position:fixed; left:0; right:0; bottom:0; z-index:91; max-width:520px; margin:0 auto; background:var(--bg2);
-  border-radius:28px 28px 0 0; border:1px solid var(--stroke); padding:10px 20px calc(22px + env(safe-area-inset-bottom,0));
+  border-radius:28px 28px 0 0; border:1px solid var(--stroke); padding:0 20px calc(22px + env(safe-area-inset-bottom,0));
   transform:translateY(105%); visibility:hidden; transition:transform .35s var(--ease), visibility 0s .35s; max-height:90vh; overflow-y:auto;}
 .sheet.open{transform:none; visibility:visible; transition:transform .35s var(--ease);}
-.grabber{width:36px; height:5px; border-radius:3px; background:var(--stroke2); margin:4px auto 12px;}
-.sheet-close{position:absolute; top:14px; right:14px; z-index:4; background:rgba(0,0,0,.45); color:#fff; border:none;}
-.sheet .poster{width:100%; border-radius:var(--r-lg); box-shadow:0 20px 40px -12px rgba(0,0,0,.5);}
+.grabber{width:36px; height:5px; border-radius:3px; background:var(--stroke2); margin:10px auto 2px;}
+/* Desktop/tablet: a proper centered dialog instead of a stretched bottom sheet — the bottom-sheet shape
+   reads as broken, not intentional, once the viewport is wide enough that the sheet floats in the middle
+   of the screen with huge empty margins either side of a 520px column. */
+@media (min-width:720px){
+  .scrim{backdrop-filter:blur(2px);}
+  .sheet{left:50%; right:auto; bottom:auto; top:50%; max-width:min(92vw,880px); width:880px; max-height:min(86vh,840px);
+    border-radius:var(--r-lg); transform:translate(-50%,calc(-50% + 16px)); padding:0 28px 28px;}
+  .sheet.open{transform:translate(-50%,-50%);}
+  .grabber{display:none;}
+  .sheet-body{display:grid; grid-template-columns:minmax(220px,320px) 1fr; gap:28px; align-items:start;}
+  .sheet-body .poster{margin-top:0;}
+}
+.sheet-header{position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between;
+  margin:0 -20px; padding:10px 14px; background:linear-gradient(var(--bg2) 55%,transparent);}
+@media (min-width:720px){ .sheet-header{margin:0 -28px; padding:16px 20px 10px;} }
+.sheet-header-nav{display:flex; gap:6px;}
+.sheet-close,.sheet-nav{position:static; background:var(--surface2); color:var(--text); border:1px solid var(--stroke);}
+.sheet .poster{width:100%; border-radius:var(--r-lg); box-shadow:0 20px 40px -12px rgba(0,0,0,.5); margin-top:2px;}
 .sheet h2{font-size:22px; font-weight:800; margin-top:16px;}
 .sheet .sub{color:var(--text2); font-size:14.5px;}
 .sheet-tags{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;}
 .tag{padding:5px 11px; border-radius:100px; background:var(--surface2); border:1px solid var(--stroke); font-size:12px; font-weight:700; color:var(--text2);}
 .sheet-why{margin-top:14px; padding:11px 13px; border-radius:var(--r-sm); background:color-mix(in srgb, var(--accent) 12%, transparent); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent); font-size:13px; color:var(--text2);}
-.sheet-actions{display:flex; gap:10px; margin-top:16px;}
+.sheet-actions{display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;}
+.sheet-actions .btn{flex:none;}
+.sheet-actions-utility{display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;}
+.sheet-actions-utility .btn{font-size:12.5px; padding:8px 13px;}
 .sheet-cover-miss{display:flex; align-items:center; gap:10px; justify-content:space-between; margin-top:14px; padding:10px 12px; background:var(--bg2); border:1px solid var(--stroke); border-radius:10px; font-size:13px; color:var(--text2);}
 .sheet-cover-miss button{flex:none;}
 @media (prefers-reduced-motion:no-preference){.sheet-cover-miss{animation:xin .18s ease-out}}
@@ -225,8 +247,6 @@ button:disabled{opacity:.4;cursor:not-allowed;}
 .sheet.dragging{transition:none;}
 .grabber{position:relative;touch-action:none;cursor:grab;}
 .grabber::after{content:"";position:absolute;inset:-14px -80px;}
-.sheet-nav{position:absolute;top:14px;z-index:4;background:rgba(0,0,0,.45);color:#fff;border:none;}
-#sheetPrev{left:14px;} #sheetNext{left:58px;}
 dialog{background:var(--bg2);color:var(--text);border:1px solid var(--stroke);border-radius:var(--r-lg);width:min(400px,92vw);padding:20px 22px;}
 dialog::backdrop{background:rgba(0,0,0,.5);}
 dl.keys{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;margin:14px 0 18px;align-items:center;}
@@ -294,13 +314,15 @@ dialog[open]{animation:rise .3s var(--ease);}
   <header class="topbar" id="topbar">
     <div class="topbar-row">
       <div class="brand"><h1>Crate</h1><small id="subcount" aria-live="polite">Loading…</small></div>
-      <button class="icon-btn" id="filterToggle" title="Genre filters" aria-label="Open genre filters" aria-expanded="false" aria-controls="sidebar">☰</button>
-      <button class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle light/dark theme">◐</button>
-      <button class="icon-btn" id="viewToggle" title="Compact view" aria-label="Toggle compact view" aria-pressed="false">▦</button>
-      <button class="icon-btn" id="sortBtn" title="Sort order" aria-label="Change sort order">⇅</button>
-      <button class="icon-btn" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo last change" disabled>↶</button>
-      <button class="icon-btn" id="aiBtn" title="AI settings" aria-label="AI provider settings">✦</button>
-      <button class="icon-btn" id="helpBtn" title="Shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="filterToggle" title="Genre filters" aria-label="Open genre filters" aria-expanded="false" aria-controls="sidebar">☰</button>
+        <button class="icon-btn" id="themeToggle" title="Toggle theme" aria-label="Toggle light/dark theme">◐</button>
+        <button class="icon-btn" id="viewToggle" title="Compact view" aria-label="Toggle compact view" aria-pressed="false">▦</button>
+        <button class="icon-btn" id="sortBtn" title="Sort order" aria-label="Change sort order">⇅</button>
+        <button class="icon-btn" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo last change" disabled>↶</button>
+        <button class="icon-btn" id="aiBtn" title="AI settings" aria-label="AI provider settings">✦</button>
+        <button class="icon-btn" id="helpBtn" title="Shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+      </div>
     </div>
     <div class="search-wrap">
       <span class="search-icon" aria-hidden="true">⌕</span>
@@ -353,24 +375,33 @@ dialog[open]{animation:rise .3s var(--ease);}
 <div class="scrim" id="scrim"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
   <div class="grabber"></div>
-  <button class="icon-btn sheet-close" id="sheetClose" aria-label="Close">✕</button>
-  <button class="icon-btn sheet-nav" id="sheetPrev" aria-label="Previous album">‹</button>
-  <button class="icon-btn sheet-nav" id="sheetNext" aria-label="Next album">›</button>
-  <div id="sheetPoster"></div>
-  <h2 id="sheetTitle"></h2>
-  <div class="sub" id="sheetSub"></div>
-  <div class="sheet-tags" id="sheetTags"></div>
-  <div class="sheet-why" id="sheetWhy" hidden></div>
-  <p class="sheet-synopsis" id="sheetSynopsis" hidden></p>
-  <div class="sheet-cover-miss" id="sheetCoverMiss" hidden role="status">
-    <span>Couldn't find a cover for this album.</span>
-    <button class="btn ghost" id="sheetCoverMissBtn" type="button">Choose one…</button>
+  <div class="sheet-header">
+    <div class="sheet-header-nav">
+      <button class="icon-btn sheet-nav" id="sheetPrev" aria-label="Previous album">‹</button>
+      <button class="icon-btn sheet-nav" id="sheetNext" aria-label="Next album">›</button>
+    </div>
+    <button class="icon-btn sheet-close" id="sheetClose" aria-label="Close">✕</button>
   </div>
-  <div class="sheet-actions">
-    <button class="btn primary" id="sheetOwnBtn"></button>
-    <button class="btn ghost" id="sheetMoreBtn">More by artist</button>
+  <div class="sheet-body">
+    <div id="sheetPoster"></div>
+    <div class="sheet-main">
+      <h2 id="sheetTitle"></h2>
+      <div class="sub" id="sheetSub"></div>
+      <div class="sheet-tags" id="sheetTags"></div>
+      <div class="sheet-why" id="sheetWhy" hidden></div>
+      <p class="sheet-synopsis" id="sheetSynopsis" hidden></p>
+      <div class="sheet-cover-miss" id="sheetCoverMiss" hidden role="status">
+        <span>Couldn't find a cover for this album.</span>
+        <button class="btn ghost" id="sheetCoverMissBtn" type="button">Choose one…</button>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn primary" id="sheetOwnBtn"></button>
+        <button class="btn ghost" id="sheetMoreBtn">More by artist</button>
+      </div>
+      <div class="sheet-actions-utility" id="sheetActionsUtility"></div>
+      <div class="service-links" id="sheetServices"></div>
+    </div>
   </div>
-  <div class="service-links" id="sheetServices"></div>
 </div>
 <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button id="toastAct" type="button" hidden></button><button id="toastAct2" type="button" hidden></button></div>
 <dialog id="help" aria-labelledby="helpTitle"><h2 id="helpTitle">Shortcuts</h2>
