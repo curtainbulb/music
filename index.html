@@ -266,9 +266,15 @@ body::before{content:"";position:fixed;inset:-20%;z-index:-1;pointer-events:none
 .sheet{transition:transform .5s cubic-bezier(.32,.72,0,1),visibility 0s .5s;} .sheet.open{transition:transform .5s cubic-bezier(.32,.72,0,1);}
 .sheet.open .poster{animation:rise .5s .08s var(--ease) both;}
 .toast{translate:-50% 24px;transition:opacity .25s,translate .4s var(--spring);}
-.ai-bar{position:relative;display:flex;gap:10px;padding:0 var(--edge) 16px;}
-.ai-bar .search{flex:1;padding-left:14px;} .ai-bar .btn{flex:none;padding:0 18px;white-space:nowrap;}
-.ai-bar.loading::after{content:"";position:absolute;left:var(--edge);right:var(--edge);bottom:6px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent) -40% 0/40% 100% no-repeat;animation:slide 1s linear infinite;}
+.today-hero{max-width:860px;margin:0 auto;text-align:center;padding:4px var(--edge) 4px;}
+.today-title{font-size:22px;font-weight:800;margin-bottom:4px;}
+.today-sub{color:var(--text3);font-size:13px;margin-bottom:16px;}
+.ai-bar{position:relative;display:flex;gap:10px;padding:0 0 16px;max-width:620px;margin:0 auto;}
+.ai-bar .search{flex:1;padding-left:14px;text-align:left;} .ai-bar .btn{flex:none;padding:0 18px;white-space:nowrap;}
+.ai-bar.loading::after{content:"";position:absolute;left:0;right:0;bottom:6px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent) -40% 0/40% 100% no-repeat;animation:slide 1s linear infinite;}
+#aiWrap .rail-head{text-align:left;}
+#aiWrap .rail{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));justify-content:center;overflow:visible;max-width:980px;margin:0 auto;}
+@media (max-width:640px){#aiWrap .rail{display:flex;overflow-x:auto;}}
 @keyframes slide{to{background-position:140% 0;}}
 .rail .skel{flex:none;width:clamp(130px,17vw,190px);}
 .rail-head .sec-act{margin-left:10px;}
@@ -283,7 +289,7 @@ dialog .row{display:flex;gap:8px;margin-top:16px;}
 .poster-choice-opt:hover,.poster-choice-opt:focus-visible{border-color:var(--accent);}
 .poster-choice-opt img{width:100%;height:100%;object-fit:cover;display:block;}
 dialog[open]{animation:rise .3s var(--ease);}
-.ai-bar,.rail-head{padding-left:var(--edge);padding-right:var(--edge);}
+.rail-head{padding-left:var(--edge);padding-right:var(--edge);}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto;}body::before{animation:none;}}
 /* Genre sidebar / mobile filter sheet (v4 spec 4). A slide-in drawer on every breakpoint rather than a
    persistent two-column desktop layout: reflowing #app into a grid around a pinned sidebar touches the
@@ -351,11 +357,15 @@ dialog[open]{animation:rise .3s var(--ease);}
     <button class="tool" id="surpriseBtn" disabled>Surprise me</button>
     <button class="tool" id="collapseBtn" disabled>Collapse / expand all</button>
   </div>
-  <section class="ai-bar" id="aiBar" aria-label="Smart picks">
-    <input class="search" id="aiPrompt" type="text" placeholder="Ask: moody 80s post-punk, or something like Bauhaus…" autocomplete="off" maxlength="200">
-    <button class="btn primary" id="aiGo" type="button">✦ Smart picks</button>
+  <section class="today-hero">
+    <h2 class="today-title">What to listen to today</h2>
+    <p class="today-sub">Describe a mood, or type one album — any order, any case: "Bauhaus - In the Flat Field", "abbey road by the beatles"…</p>
+    <div class="ai-bar" id="aiBar" aria-label="Smart picks">
+      <input class="search" id="aiPrompt" type="text" placeholder="Ask: moody 80s post-punk, or something like Bauhaus…" autocomplete="off" maxlength="200">
+      <button class="btn primary" id="aiGo" type="button">✦ Smart picks</button>
+    </div>
+    <div id="aiWrap" aria-live="polite"></div>
   </section>
-  <div id="aiWrap" aria-live="polite"></div>
   <div id="recWrap"></div>
   <main id="list"></main>
   <footer class="footer">

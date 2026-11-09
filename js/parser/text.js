@@ -58,6 +58,11 @@ export function norm(s){
 const ARTIST_GENRE = new Map();
 for (const [sec, list] of GENRE_SRC) for (const n of list.split('|')) { const k = norm(n); if (k && !ARTIST_GENRE.has(k)) ARTIST_GENRE.set(k, sec); }
 
+/** Looks up the built-in genre map by artist name (same table `finalize()` uses to infer a section for
+ * an unheaded crate row). Used by the "what to listen to today" seed box to find a genre for an artist
+ * that isn't in the loaded crate, without duplicating the artist/genre table. */
+export const genreForArtist = (artist) => ARTIST_GENRE.get(norm(artist)) || null;
+
 export function cleanHeading(s){
   return s.replace(/\*\*|__/g,'').replace(/[:#\s]+$/,'').replace(/^[\s#]+/,'').replace(/\s+/g,' ').trim().toUpperCase();
 }

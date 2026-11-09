@@ -22,6 +22,7 @@ import { shouldSkipDefaultLoad } from './store/source-gate.js';
 import { diffAlbums, summarize as summarizeDiff } from './ui/patch.js';
 import * as patchMod from './ui/patch.js';
 import { PROVIDERS, chat, listModels, aiChain, askModel, detectKeyProvider, generateSynopsis, synopsisStub } from './ai/smartpicks.js';
+import { resolveFreeform } from './parser/freeform.js';
 
 export { lsGet, lsSet, norm, UNSORTED, keyOf, saveKey };
 
@@ -496,7 +497,7 @@ export function requestSynopsis() { if (sheetAlbum) runSynopsis(sheetAlbum); }
 const safeSrc = (s) => /^[\w][\w.\- /]*\.(md|markdown|txt)$/i.test(s) && !s.includes('..') && !s.includes('//');
 function applyTextImpl(text, name, kind, parsed) {
   let res;
-  try { res = parsed || importText(name, text); } catch (e) { toast('Could not read ' + name + ': ' + e.message); return false; }
+  try { res = parsed || importText(name, text); } catch (e) { toast('Could not read ' + name + ': ' + String(e.message || e)); return false; }
   if (!res.albums.length) { toast('No albums found in ' + name); return false; }
   for (const a of res.albums) a.hay = norm(`${a.artist} ${a.title} ${a.year || ''} ${a.section}`);
   S.albums = res.albums; S.byId = new Map(res.albums.map((a) => [a.id, a])); S.skipped = res.skipped; S.source = name; S.sourceKind = kind; S.lastText = text;
@@ -586,7 +587,7 @@ async function reloadSource(manual) {
     const { text, name } = await fetchSource();
     if (text === S.lastText) { if (manual) toast('Already up to date'); return; }
     if (App.applyText(text, name, 'fetch')) { lsSet('crate.md.v1', JSON.stringify({ name, text })); toast(name + ' updated'); }
-  } catch (e) { if (manual) toast('Reload failed: ' + e.message); }
+  } catch (e) { if (manual) toast('Reload failed: ' + String(e.message || e)); }
 }
 function loadFile(f) {
   if (!f) return; if (f.size > 8e6) return toast('File too large');
@@ -766,37 +767,69 @@ function aiCandidatePool() {
 }
 const aiWrap = $('#aiWrap');
 function setPicks(...nodes) { aiWrap.querySelectorAll('.poster').forEach(releaseArt); aiWrap.replaceChildren(...nodes); }
+let shownPickIds = new Set(); // ids already on the rail, so "Brainstorm more" never repeats a card
+function makePickCard(a, why) {
+  const c = document.createElement('div'); c.className = 'rec-card'; c.tabIndex = 0; c.setAttribute('role', 'button');
+  const p = makePoster(a), w = document.createElement('div'); w.className = 'rec-why'; w.textContent = why; w.title = why; p.appendChild(w);
+  const t = document.createElement('div'); t.className = 'card-title'; t.textContent = a.title; t.style.marginTop = '8px';
+  const r = document.createElement('div'); r.className = 'card-artist'; r.textContent = a.artist + ' · ' + (a.year || '—');
+  c.append(p, t, r); c.addEventListener('click', () => Sheet.open(a, why));
+  c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); Sheet.open(a, why); } });
+  return c;
+}
 function renderPicks(picks, want, via) {
+  shownPickIds = new Set(picks.map(({ a }) => a.id));
   const head = document.createElement('div'); head.className = 'rail-head';
-  const h = document.createElement('h2'); h.textContent = 'Smart picks';
+  const h = document.createElement('h2'); h.textContent = 'What to listen to today';
   const sub = document.createElement('span'); sub.textContent = (want ? want.slice(0, 40) : 'Tailored to your crate') + ' · via ' + PROVIDERS[via].n;
+  const more = document.createElement('button'); more.type = 'button'; more.className = 'sec-act'; more.textContent = 'Brainstorm more'; more.id = 'aiMore';
+  more.addEventListener('click', () => runSmartPicks({ append: true, want, via }));
   const x = document.createElement('button'); x.type = 'button'; x.className = 'sec-act'; x.textContent = 'Dismiss'; x.addEventListener('click', () => setPicks());
-  const left = document.createElement('div'); left.append(h); head.append(left, sub, x);
+  const left = document.createElement('div'); left.append(h); head.append(left, sub, more, x);
   const rail = document.createElement('div'); rail.className = 'rail';
-  for (const { a, why } of picks) {
-    const c = document.createElement('div'); c.className = 'rec-card'; c.tabIndex = 0; c.setAttribute('role', 'button');
-    const p = makePoster(a), w = document.createElement('div'); w.className = 'rec-why'; w.textContent = why; w.title = why; p.appendChild(w);
-    const t = document.createElement('div'); t.className = 'card-title'; t.textContent = a.title; t.style.marginTop = '8px';
-    const r = document.createElement('div'); r.className = 'card-artist'; r.textContent = a.artist + ' · ' + (a.year || '—');
-    c.append(p, t, r); c.addEventListener('click', () => Sheet.open(a, why));
-    c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); Sheet.open(a, why); } });
-    rail.appendChild(c);
-  }
+  for (const { a, why } of picks) rail.appendChild(makePickCard(a, why));
   setPicks(head, rail);
 }
+function appendPicks(picks) {
+  const rail = aiWrap.querySelector('.rail'); if (!rail) return; // rail only missing if dismissed mid-request; drop the stale append
+  const fresh = picks.filter(({ a }) => !shownPickIds.has(a.id));
+  if (!fresh.length) return toast('No new matches left in your crate for this prompt');
+  for (const { a, why } of fresh) { shownPickIds.add(a.id); rail.appendChild(makePickCard(a, why)); }
+}
 let aiCtl = null;
-async function runSmartPicks() {
+async function runSmartPicks({ append = false, want: reuseWant, via: reuseVia } = {}) {
   if (aiCtl) return aiCtl.abort();
   if (!S.albums.length) return toast('Load your albums first');
   const chain = aiChain(aiCfg(), keyOf); if (!chain.length) { toast('Add an API key and model first'); return openAi(); }
-  const want = $('#aiPrompt').value.trim(), bar = $('#aiBar'), go = $('#aiGo'), prev = [...aiWrap.childNodes];
-  aiCtl = new AbortController(); bar.classList.add('loading'); go.textContent = 'Cancel';
-  const sk = document.createElement('div'); sk.className = 'rail'; sk.setAttribute('aria-busy', 'true');
-  for (let i = 0; i < 7; i++) sk.appendChild(Object.assign(document.createElement('div'), { className: 'skel' }));
-  setPicks(sk);
-  try { const { picks, via } = await askModel(chain, S.albums.filter(isOwned), aiCandidatePool(), want, aiCtl.signal); renderPicks(picks, want, via); toast('Smart picks via ' + PROVIDERS[via].n); }
-  catch (e) { aiWrap.replaceChildren(...prev); toast(e.name === 'AbortError' ? 'Cancelled' : e.message.slice(0, 160)); }
-  finally { aiCtl = null; bar.classList.remove('loading'); go.textContent = '✦ Smart picks'; }
+  const typed = append ? reuseWant : $('#aiPrompt').value.trim();
+  // Flexible seed parsing: only rewrite the prompt when the typed text actually looks like a structured
+  // "Artist - Title" (etc.) line — resolveFreeform then finds the best crate match or crate-agnostic guess
+  // and we hand the model a clean "similar to X by Y" seed instead of the raw separator the person typed.
+  // A free-text mood prompt ("moody 80s post-punk") has no separator, so parseFreeformQuery returns an
+  // artist-less guess and this is a no-op — existing behaviour for that case is unchanged.
+  let want = typed;
+  if (!append && typed) {
+    const { album, query } = resolveFreeform(typed, S.albums);
+    if (album) want = `albums similar to ${album.artist} - ${album.title}`;
+    else if (query?.artist) want = `albums similar to ${query.artist} - ${query.title}`;
+  }
+  const bar = $('#aiBar'), go = $('#aiGo'), prev = [...aiWrap.childNodes];
+  aiCtl = new AbortController(); bar.classList.add('loading'); if (!append) go.textContent = 'Cancel';
+  if (!append) { const sk = document.createElement('div'); sk.className = 'rail'; sk.setAttribute('aria-busy', 'true');
+    for (let i = 0; i < 7; i++) sk.appendChild(Object.assign(document.createElement('div'), { className: 'skel' }));
+    setPicks(sk); }
+  else { const moreBtn = $('#aiMore'); if (moreBtn) busy(moreBtn, true, 'Brainstorm more'); }
+  try {
+    const pool = append ? aiCandidatePool().filter((a) => !shownPickIds.has(a.id)) : aiCandidatePool();
+    const { picks, via } = await askModel(chain, S.albums.filter(isOwned), pool, want, aiCtl.signal);
+    if (append) appendPicks(picks); else { renderPicks(picks, want, via); toast('Smart picks via ' + PROVIDERS[via].n); }
+  } catch (e) {
+    if (append) toast(e.name === 'AbortError' ? 'Cancelled' : String(e.message || e).slice(0, 160));
+    else { aiWrap.replaceChildren(...prev); toast(e.name === 'AbortError' ? 'Cancelled' : String(e.message || e).slice(0, 160)); }
+  } finally {
+    aiCtl = null; bar.classList.remove('loading'); if (!append) go.textContent = '✦ Smart picks';
+    const moreBtn = $('#aiMore'); if (append && moreBtn) busy(moreBtn, false, 'Brainstorm more');
+  }
 }
 $('#aiGo').addEventListener('click', runSmartPicks);
 $('#aiPrompt').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runSmartPicks(); } });
@@ -876,13 +909,13 @@ $('#aiFetch').addEventListener('click', async () => {
   const p = aiEl.prov.value, btn = $('#aiFetch'); busy(btn, true, 'Fetch');
   try { const ids = await listModels(p, aiEl.key.value.trim());
     $('#aiModels').replaceChildren(...ids.map((id) => { const o = document.createElement('option'); o.value = id; return o; })); toast(`${ids.length} models found`); }
-  catch (e) { toast(e.message.slice(0, 160)); } finally { busy(btn, false, 'Fetch'); }
+  catch (e) { toast(String(e.message || e).slice(0, 160)); } finally { busy(btn, false, 'Fetch'); }
 });
 $('#aiTest').addEventListener('click', async () => {
   const p = aiEl.prov.value, btn = $('#aiTest'), model = aiEl.model.value.trim(); if (!model) return toast('Choose a model first');
   busy(btn, true, 'Test');
   try { await chat({ p, key: aiEl.key.value.trim(), model }, 'Reply with the single word OK.', 'ping'); toast('Connection works'); }
-  catch (e) { toast(e.message.slice(0, 160)); } finally { busy(btn, false, 'Test'); }
+  catch (e) { toast(String(e.message || e).slice(0, 160)); } finally { busy(btn, false, 'Test'); }
 });
 $('#aiSave').addEventListener('click', () => {
   const p = aiEl.prov.value, P = PROVIDERS[p], key = aiEl.key.value.trim(), model = aiEl.model.value.trim();
