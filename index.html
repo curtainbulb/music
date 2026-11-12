@@ -90,12 +90,21 @@ button{cursor:pointer;}
 .tools{display:flex; gap:8px; padding:0 16px 14px; flex-wrap:wrap;}
 .tool{padding:7px 12px; border-radius:100px; border:1px solid var(--stroke); background:var(--surface2); font-size:12.5px; font-weight:600; color:var(--text2);}
 
-.rail-head{display:flex; align-items:baseline; justify-content:space-between; padding:4px 16px 0;}
+.rail-head{display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:6px 12px; padding:4px 16px 0;}
 .rail-head h2{font-size:18px; font-weight:800;}
-.rail-head span{color:var(--text3); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
-.rail{display:flex; gap:12px; overflow-x:auto; padding:12px 16px 16px; scroll-snap-type:x proximity;}
-.rec-card{flex:none; width:140px; scroll-snap-align:start; cursor:pointer;}
-.rec-card .poster{width:140px;}
+.rail-head span{color:var(--text3); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; overflow:hidden; text-overflow:ellipsis;}
+.rail-head-text{display:flex; flex-direction:column; gap:2px; min-width:0; flex:1 1 auto;}
+.rail-head-actions{display:flex; align-items:center; gap:8px; flex:none;}
+.rail{display:flex; gap:12px; overflow-x:auto; padding:12px 16px 16px; scroll-snap-type:x proximity; max-width:100%;}
+/* Rails hide the scrollbar nowhere else by site convention, but a horizontally-scrolling rail with no
+   visible affordance reads as cut off / broken rather than scrollable, so give rails (and the era chip
+   row, same pattern) a real, styled scrollbar instead of the site-wide hidden one. */
+.rail,.chiprow{scrollbar-width:thin; scrollbar-color:var(--stroke2) transparent;}
+.rail::-webkit-scrollbar,.chiprow::-webkit-scrollbar{display:block; height:6px;}
+.rail::-webkit-scrollbar-thumb,.chiprow::-webkit-scrollbar-thumb{background:var(--stroke2); border-radius:3px;}
+.rail::-webkit-scrollbar-track,.chiprow::-webkit-scrollbar-track{background:transparent;}
+.rec-card{flex:none; width:140px; scroll-snap-align:start; cursor:pointer; max-width:100%;}
+.rec-card .poster{width:140px; max-width:100%;}
 .rec-why{position:absolute; left:6px; right:6px; bottom:6px; padding:3px 8px; border-radius:100px; background:rgba(0,0,0,.6);
   color:#fff; font-size:10px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; z-index:2;}
 
@@ -176,6 +185,13 @@ body.dense .card-artist, body.dense .card-year{font-size:10.5px;}
 .sheet-synopsis[data-state=loading]{display:flex; align-items:center; gap:8px;}
 .sheet-synopsis[data-state=loading]::before{content:""; width:13px; height:13px; flex:none; border-radius:50%; border:2px solid var(--stroke2); border-top-color:var(--accent,#7aa2ff); animation:aispin .7s linear infinite;}
 @media (prefers-reduced-motion:reduce){.sheet-synopsis[data-state=loading]::before{animation:none; border-style:dashed;}}
+/* <datalist> has no visible UI on several real browsers (Safari desktop/iOS never shows datalist
+   suggestions on a text input), so "Fetch" needs a real, always-visible list as the primary picker;
+   the datalist stays too, as a free autocomplete on browsers that do render it. */
+.ai-model-list[hidden]{display:none}
+.ai-model-list{display:flex; flex-direction:column; gap:2px; max-height:170px; overflow-y:auto; margin:6px 0 0; padding:4px; border:1px solid var(--stroke); border-radius:var(--r-sm); background:var(--surface2);}
+.ai-model-list button{display:block; width:100%; text-align:left; padding:7px 9px; border:none; border-radius:8px; background:none; color:var(--text); font-size:13px; font-family:ui-monospace,Consolas,monospace;}
+.ai-model-list button:hover,.ai-model-list button:focus-visible{background:var(--stroke2);}
 .ai-status{display:flex; align-items:center; gap:8px;}
 .ai-status-icon{width:14px; height:14px; flex:none; display:inline-block; border-radius:50%; box-sizing:border-box;}
 .ai-status-icon[data-state=checking]{border:2px solid var(--stroke2); border-top-color:var(--accent,#7aa2ff); animation:aispin .7s linear infinite;}
@@ -277,7 +293,6 @@ body::before{content:"";position:fixed;inset:-20%;z-index:-1;pointer-events:none
 @media (max-width:640px){#aiWrap .rail{display:flex;overflow-x:auto;}}
 @keyframes slide{to{background-position:140% 0;}}
 .rail .skel{flex:none;width:clamp(130px,17vw,190px);}
-.rail-head .sec-act{margin-left:10px;}
 .fld{display:block;margin-top:12px;font-size:12px;font-weight:700;color:var(--text2);}
 .fld input,.fld .sel{display:block;width:100%;margin-top:6px;padding:10px 12px;border-radius:var(--r-sm);border:1px solid var(--stroke);background:var(--surface);outline:none;font-weight:500;color:var(--text);}
 .fld input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent);}
@@ -422,6 +437,7 @@ dialog[open]{animation:rise .3s var(--ease);}
   <label class="fld">Provider<select class="sel" id="aiProv"></select></label>
   <label class="fld">API key<span class="keyrow"><input id="aiKey" type="password" autocomplete="off" spellcheck="false"><button type="button" class="tool" id="aiShow">Show</button></span></label>
   <label class="fld">Model<span class="keyrow"><input id="aiModel" list="aiModels" autocomplete="off" spellcheck="false" placeholder="Use Fetch to list models"><datalist id="aiModels"></datalist><button type="button" class="tool" id="aiFetch">Fetch</button></span></label>
+  <div class="ai-model-list" id="aiModelList" role="listbox" aria-label="Fetched models" hidden></div>
   <label class="chk"><input type="checkbox" id="aiRemember"> Remember this key on this device</label>
   <p class="note ai-status" id="aiNoteRow"><span class="ai-status-icon" id="aiStatusIcon" aria-hidden="true"></span><span id="aiNote"></span></p>
   <div class="row"><button class="btn ghost" id="aiForget" type="button">Forget key</button><button class="btn ghost" id="aiTest" type="button">Test</button><button class="btn primary" id="aiSave" type="button">Save</button></div>

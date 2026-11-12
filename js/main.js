@@ -780,12 +780,16 @@ function makePickCard(a, why) {
 function renderPicks(picks, want, via) {
   shownPickIds = new Set(picks.map(({ a }) => a.id));
   const head = document.createElement('div'); head.className = 'rail-head';
-  const h = document.createElement('h2'); h.textContent = 'What to listen to today';
+  // "Smart picks", not "What to listen to today" — the hero heading right above this rail already says
+  // that, and repeating it verbatim read as a layout bug rather than two distinct pieces of copy.
+  const h = document.createElement('h2'); h.textContent = 'Smart picks';
   const sub = document.createElement('span'); sub.textContent = (want ? want.slice(0, 40) : 'Tailored to your crate') + ' · via ' + PROVIDERS[via].n;
+  const left = document.createElement('div'); left.className = 'rail-head-text'; left.append(h, sub);
   const more = document.createElement('button'); more.type = 'button'; more.className = 'sec-act'; more.textContent = 'Brainstorm more'; more.id = 'aiMore';
   more.addEventListener('click', () => runSmartPicks({ append: true, want, via }));
-  const x = document.createElement('button'); x.type = 'button'; x.className = 'sec-act'; x.textContent = 'Dismiss'; x.addEventListener('click', () => setPicks());
-  const left = document.createElement('div'); left.append(h); head.append(left, sub, more, x);
+  const x = document.createElement('button'); x.type = 'button'; x.className = 'sec-act'; x.textContent = 'Dismiss'; x.setAttribute('aria-label', 'Dismiss smart picks'); x.addEventListener('click', () => setPicks());
+  const actions = document.createElement('div'); actions.className = 'rail-head-actions'; actions.append(more, x);
+  head.append(left, actions);
   const rail = document.createElement('div'); rail.className = 'rail';
   for (const { a, why } of picks) rail.appendChild(makePickCard(a, why));
   setPicks(head, rail);
@@ -848,6 +852,7 @@ function aiLoad() {
   const p = aiEl.prov.value, P = PROVIDERS[p];
   aiEl.key.value = keyOf(p); aiEl.key.disabled = !!P.nokey; aiEl.key.type = 'password'; $('#aiShow').textContent = 'Show';
   aiEl.model.value = (aiCfg().models || {})[p] || ''; aiEl.rem.checked = keyRemembered(p); $('#aiModels').replaceChildren();
+  const modelList = $('#aiModelList'); modelList.hidden = true; modelList.replaceChildren();
   setAiStatus('', (P.note ? P.note + ' ' : '') + 'Endpoint: ' + P.u + '. Nothing is sent until you press Smart picks or Test.');
 }
 function openAi() { fillProv(); aiLoad(); $('#ai').showModal(); }
@@ -905,11 +910,36 @@ aiEl.key.addEventListener('input', () => {
 });
 $('#ai').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
 $('#aiShow').addEventListener('click', () => { const hide = aiEl.key.type === 'text'; aiEl.key.type = hide ? 'password' : 'text'; $('#aiShow').textContent = hide ? 'Show' : 'Hide'; });
+const aiModelList = $('#aiModelList');
+/** Renders fetched model ids as a real, always-visible, clickable list (brief item 2b): picking one fills
+ * the model input directly. The native <datalist> below stays too for browsers that do render it, but
+ * Safari (desktop and iOS) shows no UI at all for a text input's datalist, which is exactly the "Fetch
+ * succeeded but nothing happens" complaint — this list is the part that actually works everywhere. */
+function renderModelList(ids) {
+  aiModelList.replaceChildren();
+  if (!ids.length) { aiModelList.hidden = true; return; }
+  for (const id of ids) {
+    const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'option'); b.textContent = id;
+    b.addEventListener('click', () => {
+      aiEl.model.value = id; aiModelList.hidden = true;
+      const model = aiEl.model.value.trim(); if (model) validateKey(aiEl.prov.value, aiEl.key.value.trim(), model);
+      aiEl.model.focus();
+    });
+    aiModelList.appendChild(b);
+  }
+  aiModelList.hidden = false;
+}
 $('#aiFetch').addEventListener('click', async () => {
-  const p = aiEl.prov.value, btn = $('#aiFetch'); busy(btn, true, 'Fetch');
-  try { const ids = await listModels(p, aiEl.key.value.trim());
-    $('#aiModels').replaceChildren(...ids.map((id) => { const o = document.createElement('option'); o.value = id; return o; })); toast(`${ids.length} models found`); }
-  catch (e) { toast(String(e.message || e).slice(0, 160)); } finally { busy(btn, false, 'Fetch'); }
+  const p = aiEl.prov.value, P = PROVIDERS[p], btn = $('#aiFetch'); busy(btn, true, 'Fetch');
+  if (!P.nokey && !aiEl.key.value.trim()) { toast('Enter an API key first'); busy(btn, false, 'Fetch'); return; }
+  try {
+    const ids = await listModels(p, aiEl.key.value.trim());
+    $('#aiModels').replaceChildren(...ids.map((id) => { const o = document.createElement('option'); o.value = id; return o; }));
+    renderModelList(ids);
+    if (!ids.length) toast(`${P.n} returned no models for this key. Double-check the key, or the model id manually.`);
+    else toast(`${ids.length} model${ids.length === 1 ? '' : 's'} found — pick one below`);
+  } catch (e) { aiModelList.hidden = true; toast(`Could not list ${P.n} models: ${String(e.message || e).slice(0, 140)}`); }
+  finally { busy(btn, false, 'Fetch'); }
 });
 $('#aiTest').addEventListener('click', async () => {
   const p = aiEl.prov.value, btn = $('#aiTest'), model = aiEl.model.value.trim(); if (!model) return toast('Choose a model first');

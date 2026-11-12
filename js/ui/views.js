@@ -18,6 +18,7 @@ body[data-view=list] .card{display:grid;grid-template-columns:64px 1fr;gap:var(-
 .x-tools select,.x-tools input[type=range]{min-height:var(--touch);background:var(--bg2);color:inherit;border:1px solid var(--stroke);border-radius:var(--radius-1);padding:0 var(--space-2);font:inherit}
 .card{transition:transform var(--dur-2) var(--ease-out)}.card:hover{transform:translateY(-3px)}.card:active{transform:scale(.97)}
 .card.x-sel{outline:3px solid var(--accent,#6aa8ff);outline-offset:3px;border-radius:var(--radius-2)}
+.x-bar[hidden]{display:none}
 .x-bar{position:fixed;inset:auto 0 0 0;z-index:40;display:flex;gap:var(--space-2);align-items:center;justify-content:center;flex-wrap:wrap;padding:var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--stroke2);box-shadow:var(--elev-3)}
 .x-table-wrap{overflow-x:auto;padding:0 var(--space-4) var(--space-8);max-width:var(--content-max);margin:0 auto}
 .x-table{width:100%;border-collapse:collapse;font-size:var(--text-sm)}
@@ -184,5 +185,23 @@ $('#aiBtn')?.addEventListener('click', () => setTimeout(() => {
   if (!dlg || dlg.querySelector('.x-ai-note')) return;
   dlg.prepend(h('p', { class: 'x-ai-note' }, 'Nothing is sent until you press the button. A request sends a sample of up to 40 albums from your crate to the one provider you pick. Keys stay in this browser and go only to that provider.'));
 }, 0));
-const idleSweep = () => listEl.querySelectorAll('.poster').forEach((p) => { if (p._painted && !p._art && !p._cb) requestArt(p, 3); });
+/**
+ * Automatic retry for transient cover-fetch failures (brief item 3: "continuous/automatic retry with
+ * backoff", not only the manual "Retry missing covers" button). js/covers/cache.js already schedules a
+ * miss's own retryAt (1h / 1d / 7d escalating backoff) — nothing before this read it back on its own; a
+ * miss stayed stuck as `_art = 'none'` for the rest of the session until the user clicked the button or
+ * reloaded the page. This sweep, riding the same 8s idle tick as the existing on-screen art sweep, checks
+ * each known-missing poster's cache entry and un-sticks it once its own backoff has actually elapsed —
+ * same schedule, same per-provider rate limiter and circuit breaker in js/covers/limiter.js, just applied
+ * automatically instead of requiring a click.
+ */
+async function retryExpiredMisses() {
+  const now = Date.now();
+  for (const p of listEl.querySelectorAll('.poster')) {
+    if (p._art !== 'none' || p._cb || !p._album) continue;
+    const entry = await Art.peek(p._album.id);
+    if (entry && !entry.pinned && !entry.url && entry.retryAt && now >= entry.retryAt) { p._art = null; requestArt(p, 3); }
+  }
+}
+const idleSweep = () => { listEl.querySelectorAll('.poster').forEach((p) => { if (p._painted && !p._art && !p._cb) requestArt(p, 3); }); retryExpiredMisses(); };
 setInterval(() => (globalThis.requestIdleCallback ?? setTimeout)(idleSweep), 8000);
