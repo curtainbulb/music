@@ -62,16 +62,69 @@ export const READERS = {
     const res = await api(`https://api.box.com/2.0/files/${fileId}/content`, { headers: bearer(token) }, signal);
     return { text: await boundedText(res), etag: meta.etag };
   },
+  /**
+   * pCloud. Slice 4's notes flagged this as an unverified assumption ("pCloud accepts Authorization:
+   * Bearer... if it rejects it, pCloud needs access_token as a query parameter") and real-world use
+   * confirmed the pessimistic branch: pCloud's REST endpoints (stat/getfilelink, as opposed to its OAuth
+   * token-issuing endpoint) are documented and commonly used with `access_token` as a query parameter, not
+   * a Bearer header — the Bearer-only attempt was failing with a 401 for every real account. Try the
+   * header first (harmless if unsupported) and fall back to the query-parameter form on a 401 rather than
+   * failing outright, so this works against both API shapes instead of guessing one.
+   */
   async pcloud(path, v, signal, token) {
     const host = token.locationid === 2 ? 'eapi.pcloud.com' : 'api.pcloud.com', q = encodeURIComponent(path);
     const call = async (method) => {
-      const data = await (await api(`https://${host}/${method}?path=${q}`, { headers: bearer(token) }, signal)).json();
-      if (data.result !== 0) throw new Error(data.error || `pCloud error ${data.result}`);
-      return data;
+      const url = `https://${host}/${method}?path=${q}`;
+      try {
+        const data = await (await api(url, { headers: bearer(token) }, signal)).json();
+        if (data.result !== 0) throw new Error(data.error || `pCloud error ${data.result}`);
+        return data;
+      } catch (e) {
+        if (!e.auth) throw e;
+        const data = await (await api(`${url}&access_token=${encodeURIComponent(token.access)}`, {}, signal)).json();
+        if (data.result !== 0) throw new Error(data.error || `pCloud error ${data.result}`);
+        return data;
+      }
     };
     const etag = String((await call('stat')).metadata.hash);
     if (etag === v?.etag) return { notModified: true };
     const link = await call('getfilelink');
     return { text: await boundedText(await api(`https://${link.hosts[0]}${link.path}`, {}, signal)), etag };
+  },
+};
+
+/**
+ * Writer contract: (path, text, signal, token) -> void, throws on failure. Deliberately much smaller than
+ * READERS: this app only ever writes one thing, the small ownership-sidecar JSON file described in
+ * js/sources/own-sync.js (never the album list itself, which stays one-directional/read-only per the
+ * existing design — see docs/DEVLOG.md). Only the two providers covered by READERS that the product brief
+ * actually asked to be made to work (Dropbox, pCloud) have a writer; OneDrive/Google/Box stay read-only
+ * drive sources exactly as before.
+ */
+export const WRITERS = {
+  async dropbox(path, text, signal, token) {
+    await api('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: { ...bearer(token), 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': asciiJson({ path, mode: 'overwrite', mute: true }) },
+      body: text,
+    }, signal);
+  },
+  /** Same Bearer-header-then-access_token-query-param fallback as the pCloud reader above, for the same
+   * documented reason. pCloud's multipart `uploadfile` takes the target folder in `path` and the file name
+   * as a form field, not a single combined path. */
+  async pcloud(path, text, signal, token) {
+    const host = token.locationid === 2 ? 'eapi.pcloud.com' : 'api.pcloud.com';
+    const slash = path.lastIndexOf('/'), dir = slash > 0 ? path.slice(0, slash) : '/', name = path.slice(slash + 1) || 'ownership.json';
+    const form = new FormData();
+    form.append('file', new Blob([text], { type: 'application/json' }), name);
+    const url = `https://${host}/uploadfile?path=${encodeURIComponent(dir)}`;
+    try {
+      const data = await (await api(url, { method: 'POST', headers: bearer(token), body: form }, signal)).json();
+      if (data.result !== 0) throw new Error(data.error || `pCloud error ${data.result}`);
+    } catch (e) {
+      if (!e.auth) throw e;
+      const data = await (await api(`${url}&access_token=${encodeURIComponent(token.access)}`, { method: 'POST', body: form }, signal)).json();
+      if (data.result !== 0) throw new Error(data.error || `pCloud error ${data.result}`);
+    }
   },
 };

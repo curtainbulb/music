@@ -66,19 +66,44 @@ export const genreForArtist = (artist) => ARTIST_GENRE.get(norm(artist)) || null
 export function cleanHeading(s){
   return s.replace(/\*\*|__/g,'').replace(/[:#\s]+$/,'').replace(/^[\s#]+/,'').replace(/\s+/g,' ').trim().toUpperCase();
 }
-/* "[x] Sub — Artist - Title (1999)" -> {artist,title,year,sub,owned} | null */
+/**
+ * "[x] Sub — Artist - Title (1999)" -> {artist,title,year,sub,owned} | null
+ *
+ * More flexible list formats (user report: "make the import and parse more flexible so it works with
+ * multiple kinds of list formats"). Beyond the original hyphen/en-dash "Artist - Title" form:
+ *   - an em dash as the artist/title separator itself ("Artist — Title"), not only as the sub-genre
+ *     prefix it already meant ("Sub — Artist - Title") — previously a plain em-dash line with no
+ *     dash-form "rest" after it fell through every check and was silently skipped, even though it's a
+ *     common paste shape (several apps render a typed " - " as an em dash on export/copy).
+ *   - a colon separator ("Artist: Title"), common in hand-typed or copy-pasted lists.
+ *   - the reversed "Title by Artist" form, unambiguous by construction (whatever is left of " by " is
+ *     the title, whatever is right is the artist) — tried last, only once every other form has failed,
+ *     so it can never misread an ordinary "Artist - Title" line whose title happens to contain "by".
+ */
 export function parseEntry(raw){
   let s = raw.replace(/\*\*|__|`/g,'').trim(), owned = null, m = s.match(/^\[( |x|X)\]\s*/);
   if (m){ owned = m[1] !== ' '; s = s.slice(m[0].length); }
   let sub = null; const i = s.indexOf(' \u2014 ');
   if (i > 0){ const pre = s.slice(0,i), rest = s.slice(i+3);
-    if (!/ [-\u2013] /.test(pre) && / [-\u2013] /.test(rest)){ sub = pre.trim(); s = rest.trim(); } }
+    if (!/ [-\u2013] /.test(pre) && / [-\u2013:] /.test(rest)){ sub = pre.trim(); s = rest.trim(); } }
   let year = null; m = s.match(/\s*\((\d{4})\)\s*$/);
   if (m){ year = +m[1]; s = s.slice(0, m.index); }
-  const sep = s.search(/ [-\u2013] /);
-  if (sep < 1) return null;
-  const artist = s.slice(0,sep).trim(), title = s.slice(sep+3).trim();
-  return artist && title ? {artist, title, year, sub, owned} : null;
+  let sep = s.search(/ [-\u2013\u2014] /);
+  if (sep >= 1){
+    const artist = s.slice(0,sep).trim(), title = s.slice(sep+3).trim();
+    if (artist && title) return {artist, title, year, sub, owned};
+  }
+  sep = s.search(/:\s+/);
+  if (sep >= 1){
+    const artist = s.slice(0,sep).trim(), title = s.slice(s.indexOf(':', sep) + 1).trim();
+    if (artist && title) return {artist, title, year, sub, owned};
+  }
+  const byMatch = /^(.+?)\s+by\s+(.+)$/i.exec(s);
+  if (byMatch){
+    const title = byMatch[1].trim(), artist = byMatch[2].trim();
+    if (artist && title) return {artist, title, year, sub, owned};
+  }
+  return null;
 }
 export function parseAlbums(text){
   const rows = [], skipped = []; let section = null, hadHeadings = false;

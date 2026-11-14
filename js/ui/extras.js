@@ -5,11 +5,12 @@ import { createCloudSource } from '../sources/cloud.js';
 import { createKv } from '../store/idb.js';
 import { OAUTH, beginAuth, completeAuthIfReturning, getToken, clearToken } from '../sources/oauth.js';
 import { READERS } from '../sources/drives.js';
+import { pushOwnership, pullOwnership, OWN_SYNC_PROVIDERS } from '../sources/own-sync.js';
 import { mergeImportedNotes } from './notes.js';
 import { pickAutoFile, listGithubRootCandidates, fetchGithubModifiedTime } from '../sources/autodetect.js';
 import {
   $, S, App, Sheet, Art, isOwned, toast, norm, lsGet, lsSet, requestArt, paintOwned, renderStats,
-  syncAlbums, summarizeDiff, onSheetCoverMiss, requestSynopsis,
+  syncAlbums, summarizeDiff, onSheetCoverMiss, requestSynopsis, onOwnChange,
 } from '../main.js';
 
 const kv = createKv();
@@ -220,6 +221,10 @@ function startCloud(url, remember = true, read = null, label = '') {
       syncBtn.textContent = { checking: '⟳', ok: '●', offline: '○' }[s.status] ?? '!';
       syncBtn.title = `Source ${s.status}${s.lastSynced ? ' · synced ' + new Date(s.lastSynced).toLocaleTimeString() : ''}${s.message ? ' · ' + s.message : ''}`;
       if (manual && s.status !== 'checking') { manual = false; toast(s.status === 'ok' ? 'Source checked' : `Source ${s.status}: ${s.message}`); }
+      // Ride the same poll cadence as the album-list sync to pick up ownership changes pushed from another
+      // device, instead of only checking once at connect time (which would need a reload to ever see a
+      // remote change again).
+      if (s.status === 'ok' && ownSync) syncOwnershipPull();
     },
   });
   cloud.cached().then((t) => { if (t && !S.albums.length) onRemote(t, 'cached'); }).finally(() => cloud.checkNow());
@@ -233,15 +238,69 @@ function startProvider(id, path) {
   };
   lsSet('crate.cloud.provider', JSON.stringify({ id, path }));
   startCloud(`${id}:${path}`, false, reader, path.split('/').pop() || path);
+  startOwnSync(id, path);
 }
 function connectProvider(id, path) {
   if (!id || !path) return void (msg.textContent = 'Pick a provider and enter a file path or name');
   const clientId = oauthCfg[id]?.clientId;
-  if (!clientId) return void (msg.textContent = `Missing oauth.${id}.clientId in config.json (register an app with ${OAUTH[id].label}; see README)`);
+  if (!clientId) {
+    // Fix (user report: "Dropbox/pCloud isn't even working, so it's pretty useless"): this used to be a
+    // small note inside the dialog that's easy to miss, with no indication of WHY it's needed or what to
+    // do instead right now. OAuth against Dropbox/pCloud/etc. genuinely cannot work from a static page with
+    // zero setup — every provider requires a registered app id, which is a one-time, site-operator-level
+    // step (see README "Cloud drives"), not something an end user does per session. Make that limitation
+    // loud and give the actually-zero-setup path (a public share link, pasted in the URL field above) as
+    // the immediate alternative, instead of leaving the person staring at a dead "Connect and sync" button.
+    const note = `${OAUTH[id].label} needs a one-time setup step (a registered app id in config.json — see the README's "Cloud drives" section) before "Connect and sync" can work at all; this isn't a sign-in problem, it's unconfigured. Zero-setup alternative: paste a public ${OAUTH[id].label} share link in the URL field above instead — no app registration needed.`;
+    msg.textContent = note; toast(`${OAUTH[id].label} isn't set up for OAuth yet — see the note above`);
+    return;
+  }
   lsSet('crate.cloud.min', String(Math.max(0, +minutes.value || 0)));
   if (getToken(id)) { startProvider(id, path); return void dlg.close(); }
   beginAuth(id, clientId, path).catch((e) => { msg.textContent = e.message; });
 }
+
+/* ---------- ownership cross-device sync (Dropbox/pCloud only; see js/sources/own-sync.js) ---------- */
+let ownSync = null, ownSyncValidators = null, ownSyncPushTimer = 0;
+function startOwnSync(id, path) {
+  ownSync = OWN_SYNC_PROVIDERS.includes(id) ? { id, path } : null;
+  ownSyncValidators = null;
+  if (ownSync) syncOwnershipPull();
+}
+/** Whole-map "newest `updatedAt` wins" merge (see own-sync.js's header comment for the trade-off this
+ * accepts). `crate.own.changedAt` is this device's own last edit time; `crate.own.remoteStamp` is the
+ * newest `updatedAt` this device has actually confirmed is on the remote (either because it just read it,
+ * or because it just wrote it) — comparing against remoteStamp, not against "now", is what lets a device
+ * that hasn't changed anything stay quiet instead of re-pushing its unchanged map on every poll. */
+async function syncOwnershipPull() {
+  if (!ownSync) return;
+  try {
+    const pulled = await pullOwnership(ownSync.id, ownSync.path, ownSyncValidators, AbortSignal.timeout(15000));
+    if (pulled) {
+      ownSyncValidators = pulled.etag ? { etag: pulled.etag } : ownSyncValidators;
+      const changedAt = Number(lsGet('crate.own.changedAt', '0'));
+      if (pulled.updatedAt > changedAt) {
+        S.ownMap = pulled.own; persistOwn(); repaintOwn();
+        lsSet('crate.own.changedAt', String(pulled.updatedAt));
+        toast('Ownership synced from another device');
+      }
+      lsSet('crate.own.remoteStamp', String(Math.max(pulled.updatedAt, Number(lsGet('crate.own.remoteStamp', '0')))));
+    }
+  } catch (e) { syncBtn.title = `Ownership sync: ${e.message}`; }
+  syncOwnershipPushIfNewer();
+}
+async function syncOwnershipPushIfNewer() {
+  if (!ownSync) return;
+  const changedAt = Number(lsGet('crate.own.changedAt', '0')), remoteStamp = Number(lsGet('crate.own.remoteStamp', '0'));
+  if (changedAt <= remoteStamp) return;
+  try { await pushOwnership(ownSync.id, ownSync.path, S.ownMap, AbortSignal.timeout(15000)); lsSet('crate.own.remoteStamp', String(changedAt)); }
+  catch (e) { /* next local change or poll tick retries; a transient failure here must not block typing/ticking */ }
+}
+onOwnChange(() => {
+  if (!ownSync) return;
+  lsSet('crate.own.changedAt', String(Date.now()));
+  clearTimeout(ownSyncPushTimer); ownSyncPushTimer = setTimeout(syncOwnershipPushIfNewer, 2000);
+});
 
 (async function initSource() {
   try { oauthCfg = (await (await fetch('config.json', { cache: 'no-store' })).json()).oauth ?? {}; } catch { /* no config */ }
@@ -268,7 +327,11 @@ ownPicker.addEventListener('change', async () => {
   try {
     const own = ownershipFromJson((await readFiles(ownPicker.files))[0].text), prev = { ...S.ownMap };
     Object.assign(S.ownMap, own); persistOwn(); repaintOwn();
-    toast(`Ownership imported (${Object.keys(own).length})`, { label: 'Undo', fn: () => { S.ownMap = prev; persistOwn(); repaintOwn(); } });
+    // A file-based ownership import is a real ownership change too (brief: "a copy of the list that gets
+    // updated"), so it must push to a connected drive the same way a tick does, not only live in this
+    // browser's localStorage until the next manual toggle happens to trigger syncOwnershipPushIfNewer.
+    lsSet('crate.own.changedAt', String(Date.now())); if (ownSync) syncOwnershipPushIfNewer();
+    toast(`Ownership imported (${Object.keys(own).length})`, { label: 'Undo', fn: () => { S.ownMap = prev; persistOwn(); repaintOwn(); lsSet('crate.own.changedAt', String(Date.now())); if (ownSync) syncOwnershipPushIfNewer(); } });
   } catch (e) { toast('Ownership import failed: ' + e.message); }
   ownPicker.value = '';
 });
@@ -287,7 +350,7 @@ export const ACTIONS = [
   ['Scan for a file to auto-load…', runAutoDetect],
   ['Remove loaded file / start over', () => {
     if (!S.albums.length && !cloud) return toast('Nothing loaded yet');
-    cloud?.stop(); cloud = null; syncBtn.hidden = true;
+    cloud?.stop(); cloud = null; syncBtn.hidden = true; ownSync = null;
     lsSet('crate.cloud', ''); lsSet('crate.cloud.provider', ''); lsSet('crate.md.v1', '');
     S.albums = []; S.byId = new Map(); S.skipped = []; S.source = ''; S.sourceKind = ''; S.lastText = '';
     S.sections = []; S.decades = []; S.hasUnknownYear = false;

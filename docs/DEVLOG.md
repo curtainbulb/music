@@ -622,3 +622,90 @@ follow-up with actual photos, not sandbox-blocked fakes.
 ### Tests
 `node tests/run.mjs`: **37/37 passing** (36 from Slice 10 + 1 new preemption integration test).
 `grep -rn innerHTML js/ index.html sw.js`: zero matches.
+
+## Slice 13 — five concrete bug reports from real use, plus import flexibility and cross-device ownership
+
+Five problems reported against a real crate (890 albums) in a real browser, each confirmed before being
+fixed (Playwright + a throwaway `albums.md`, `python3 -m http.server`), not patched blind.
+
+1. **"Layout broken, no scroll bar, out of proportion" (the 'For You' rail).** Root cause, found by
+   reproducing it: not a layout bug at all. `history.scrollRestoration` defaults to `'auto'`, so a reload
+   put the viewport back wherever it was scrolled before — and because `#topbar` is `position:sticky;
+   top:0`, it stayed pinned at the top while everything above the scroll point (search, filters, stats,
+   "What to listen to today") scrolled out of view, leaving only a mid-row slice of the rec rail on screen
+   with its last card clipped by the viewport edge. Confirmed in Playwright: `.controls`'s `getBoundingClientRect().top`
+   was -423px after reload, not 0. Fixed in `js/main.js`: `history.scrollRestoration = 'manual'` plus an
+   explicit `scrollTo(0,0)` on load (this app has no deep-linkable anchor worth restoring). Also hardened
+   the rail scrollbar itself in `index.html` (9px, high-contrast thumb/track instead of 6px at 14% opacity)
+   since the site-wide hidden scrollbar convention made the one real affordance that would have hinted
+   "scroll me" easy to miss even when correctly scrolled.
+2. **AI model Fetch: "doesn't autofill or show names, I'm left helpless."** `js/main.js`'s `#aiFetch`
+   handler only ever reported outcomes via `toast()`, which auto-dismisses in a couple of seconds; an empty
+   key or a CORS/network failure left nothing in the dialog itself explaining what happened. Every branch
+   now also writes a persistent message via `setAiStatus()`, and a successful fetch auto-fills the Model
+   field with the first result (highlighted, `aria-selected`, in the always-visible model list) instead of
+   requiring a click before Save is usable.
+3. **Cover-fetch fallbacks/retries.** The provider chain (6 providers, per-provider circuit breakers,
+   1h/1d/7d miss backoff, idle resweep) was already in place from Slices 1–12. Found and fixed one real bug
+   while auditing it: the footer's "rate-limited, retrying shortly" status text was unreachable code —
+   `paused` was hardcoded `false` in `js/main.js`'s `emitArt`. `js/covers/service.js`'s `emit()` now reports
+   `openProviders`/`totalProviders` (how many circuit breakers are currently open) each tick, and `paused`
+   is derived from that, so a genuinely stalled queue (every provider backing off) finally looks different
+   from a working one instead of silently identical.
+4. **"Annoying thing always there, spelling mistakes, no way to turn it off" (the multi-select bar).**
+   The bar's hide/show mechanics were already correct (`bar.hidden`/`.x-bar[hidden]{display:none}`,
+   confirmed in Playwright). Three real fixes: "Unown" (not a word) renamed to "Remove", matching the
+   "Own"/"Remove" verb pair used elsewhere; an explicit ✕ close button added next to "Done" (a text button
+   at the end of a 4-button row is easy to miss as "the way out"); and a genuinely new, persisted toggle
+   ("Turn off long-press to select" in the command palette, `js/ui/views.js`) for the likely actual cause
+   of "always there" — an accidental long-press (common on touch devices mid-scroll) opening a tool the
+   person never meant to open, with the explicit "Select multiple" (☑) button kept as the no-accidents way
+   in regardless of the setting.
+5. **Cloud sync: "Dropbox and pCloud aren't even working, so it's pretty useless" / cross-device ownership.**
+   Two separate problems. (a) pCloud: `js/sources/drives.js`'s reader sent `Authorization: Bearer` only;
+   Slice 4's own notes had flagged this as an unverified assumption, and real use confirmed the pessimistic
+   branch — pCloud's REST endpoints expect `access_token` as a query parameter. Fixed with a header-first,
+   query-param-fallback-on-401 pattern (same fix applied to the new writer, below). (b) Dropbox/OneDrive/
+   Box/Google OAuth requires a site operator to register an app and put its client id in `config.json` —
+   inherent to a backend-less static page, documented in the README, but the in-app failure for an
+   unconfigured provider was a small, easy-to-miss note with no explanation of *why* or what to do instead.
+   Rewritten in `js/ui/extras.js` to clearly state it's a one-time setup gap, not a sign-in failure, and to
+   point at the actually-zero-setup alternative (a public share link, already supported, no OAuth needed).
+   The deeper ask — "tick on one device, it's ticked everywhere" — had no mechanism at all: the cloud
+   source/drive connectors were one-directional reads of the album list; ownership lived only in
+   `localStorage`, per device, forever. New `js/sources/own-sync.js` plus `WRITERS.dropbox`/`WRITERS.pcloud`
+   in `drives.js` (Dropbox's OAuth scope gained `files.content.write`) write a small `<path>.own.json`
+   sidecar next to the connected album-list file and read it back, merged by "newest `updatedAt` wins"
+   across the whole map — a documented, deliberate trade-off (not a per-field CRDT; a stale device writing
+   right after a newer one can still clobber it), consistent with how the album-list sync already resolves
+   conflicts. Wired into `js/ui/extras.js`: pushes 2s after a local tick (`onOwnChange` hook added to
+   `js/main.js`) or a file-based ownership import, pulls once on connect and again on every cloud poll tick
+   so another device's change is picked up without a reload. OneDrive/Google/Box remain read-only drive
+   sources (no WRITERS entry) — this was scoped to the two providers the report actually named.
+
+### Also fixed, found while touching the above
+**Import flexibility** (explicit ask: "make the import and parse more flexible so it works with multiple
+kinds of list formats"). `js/parser/text.js`'s `parseEntry()` only recognised a hyphen or en dash as the
+artist/title separator. A plain em-dash line ("Artist — Title", common when an app renders a typed " - "
+as an em dash on export) previously fell through every check and was silently skipped — the sub-genre-
+prefix code already used the em dash for a different purpose ("Sub — Artist - Title") but a bare one with
+no dash-form "rest" after it matched nothing at all. Added, in order (each tried only after the previous
+fails, so none can misread a line the old code already parsed correctly): em dash as a direct separator,
+a colon separator ("Artist: Title"), and the reversed "Title by Artist" form (unambiguous by construction).
+7 new Node tests cover each new form plus the two negative cases that matter most: a dash-form title
+containing the word "by" is not misread, and a line with no recognisable separator at all still returns
+`null` rather than guessing.
+
+### Tests
+`node tests/run.mjs`: **54/54 passing** (47 carried over + 7 new: `parseEntry`'s em-dash/colon/"by" forms,
+the two negative cases, and one `importText` integration test over a mixed-separator file).
+
+### Honestly unverified
+Everything that needs a real OAuth app + real Dropbox/pCloud account: the `files.content.write` scope
+actually being granted, the `WRITERS.dropbox`/`WRITERS.pcloud` upload calls succeeding against a real
+account, and the pCloud Bearer-then-query-param fallback actually firing against a real 401 (this
+sandbox's egress proxy blocks dropboxapi.com/pcloud.com, confirmed by connection-refused errors during
+this session, consistent with every prior slice's provider-network limitation). The merge-by-`updatedAt`
+logic itself is plain, direct code with no async/DOM dependency and was read through carefully rather than
+guessed at, but has no unit test here because it's one `Date.now()` comparison wired through a real OAuth
+round-trip, not a pure function worth extracting on its own.

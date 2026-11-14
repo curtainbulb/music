@@ -83,20 +83,41 @@ ACTIONS.push(...['grid', 'list', 'table'].map((v) => ({ label: `${v[0].toUpperCa
 setView(view);
 
 /* ---------- multi-select with bulk actions ---------- */
+// User report: "why is this annoying thing always there, and there are spelling mistakes, and there must
+// be a way to toggle this". Three concrete fixes: (1) "Unown" (not a real English word, reads like a typo)
+// renamed to "Remove", matching the "Own"/"Remove" verb pair used everywhere else in the app (own-badge
+// labels, sheet action). (2) The bar gained its own explicit ✕ close button next to "Done" (same action),
+// since a text-only "Done" at the end of a 4-button row is easy to miss as "the way to close this" —
+// confirmed the bar itself was already correctly hidden/shown via `selecting` (bar.hidden, with the matching
+// `.x-bar[hidden]{display:none}` CSS override in index.html), so the complaint is answered with a more
+// obvious close affordance, not a hidden-state bug. (3) A genuinely new toggle: long-press-to-select can
+// trigger from an accidental long tap (common on touch devices, e.g. scrolling with a finger that pauses
+// briefly on a card), which is the likely reason it reads as "always there"/"annoying" rather than a
+// deliberately-opened tool — added a persistent, remembered setting to turn long-press selection off
+// entirely while keeping the explicit "Select multiple" button (☑, always available) as the
+// no-accidental-triggers way in.
 let selecting = false, lastId = null, pressTimer = 0, swallow = false;
+let longPressEnabled = lsGet('crate.longPressSelect', '1') !== '0';
 const sel = new Set();
 const count = h('span', { role: 'status', 'aria-live': 'polite' });
 const bulk = (label, fn) => h('button', { class: 'btn', type: 'button', onclick: fn }, label);
+const closeBtn = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close selection', title: 'Close selection', onclick: () => setSelecting(false) }, '✕');
 const bar = h('div', { class: 'x-bar', hidden: '', role: 'toolbar', 'aria-label': 'Selection actions' }, count,
-  bulk('Own', () => bulkOwn(true)), bulk('Unown', () => bulkOwn(false)), bulk('Retry covers', bulkRetry), bulk('Done', () => setSelecting(false)));
+  bulk('Own', () => bulkOwn(true)), bulk('Remove', () => bulkOwn(false)), bulk('Retry covers', bulkRetry), bulk('Done', () => setSelecting(false)), closeBtn);
 document.body.append(bar);
 onAlbumRemoved((id) => { sel.delete(id); if (lastId === id) lastId = null; paintSel(); });
 
 function paintSel() {
-  bar.hidden = !selecting; count.textContent = `${sel.size} selected`;
+  bar.hidden = !selecting; bar.style.display = selecting ? '' : 'none';
+  count.textContent = `${sel.size} selected`;
   listEl.querySelectorAll('.card').forEach((c) => c.classList.toggle('x-sel', sel.has(c.dataset.id)));
 }
 function setSelecting(on) { selecting = on; if (!on) { sel.clear(); lastId = null; } paintSel(); }
+function setLongPressEnabled(on) {
+  longPressEnabled = on; lsSet('crate.longPressSelect', on ? '1' : '0');
+  longPressAction.label = on ? 'Turn off long-press to select' : 'Turn on long-press to select';
+  toast(on ? 'Long-press to select turned on' : 'Long-press to select turned off — use the ☑ button instead');
+}
 function toggleSel(id, range) {
   if (range && lastId) {
     const ids = allIds(), i = ids.indexOf(lastId), j = ids.indexOf(id);
@@ -112,12 +133,15 @@ listEl.addEventListener('click', (e) => {
   toggleSel(card.dataset.id, e.shiftKey);
 }, true);
 listEl.addEventListener('pointerdown', (e) => {
+  if (!longPressEnabled) return;
   const card = e.target.closest('.card');
   if (!card || e.button) return;
   pressTimer = setTimeout(() => { swallow = true; selecting = true; toggleSel(card.dataset.id); }, 500);
 });
 for (const type of ['pointerup', 'pointermove', 'pointercancel']) listEl.addEventListener(type, () => clearTimeout(pressTimer));
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && selecting && !document.querySelector('dialog[open]')) setSelecting(false); });
+const longPressAction = { label: longPressEnabled ? 'Turn off long-press to select' : 'Turn on long-press to select', run: () => setLongPressEnabled(!longPressEnabled) };
+ACTIONS.push(longPressAction);
 
 function bulkOwn(val) {
   const map = byId(), items = [...sel].map((id) => map.get(id)).filter(Boolean);

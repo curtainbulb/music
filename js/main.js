@@ -26,6 +26,22 @@ import { resolveFreeform } from './parser/freeform.js';
 
 export { lsGet, lsSet, norm, UNSORTED, keyOf, saveKey };
 
+/**
+ * Bug (user report, "layout is broken/out of proportion, no scroll bar"): on a reload the browser's
+ * default scroll-position restoration (`history.scrollRestoration === 'auto'`) puts the viewport back
+ * wherever it was scrolled to before the reload. Because `#topbar` is `position:sticky; top:0`, it stays
+ * pinned at the viewport top regardless, while every section above the scroll point (search/filters/
+ * stats/tools/"What to listen to today") is scrolled out of view above it — what's left on screen is just
+ * the middle of the "For You" rail, mid-row, with its last card clipped by the right edge. That reads as
+ * "broken" rather than "scrolled", especially with the site-wide hidden scrollbar (`scrollbar-width:none`
+ * in index.html) removing the one visual cue that would explain it. This app has no content worth
+ * restoring scroll position for (no deep-linkable anchors), so take ownership of it instead of trusting
+ * the browser's heuristic: always start a fresh load/reload at the top.
+ */
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+addEventListener('beforeunload', () => { try { scrollTo(0, 0); } catch { /* ignore */ } });
+scrollTo(0, 0);
+
 /* =====================================================================
    STATE + PERSISTENCE (all storage access is guarded)
    ===================================================================== */
@@ -44,7 +60,10 @@ export const decadeOf = (a) => (a.year ? Math.floor(a.year / 10) * 10 : 'unk');
    ===================================================================== */
 let artFound = 0, artLast = null;
 const artStatus = { onChange: null };
-const emitArt = (st) => artStatus.onChange && artStatus.onChange({ found: artFound, queued: st ? st.queued : 0, paused: false, offline: !navigator.onLine });
+// `paused` used to be hardcoded false (bug: the footer's "rate-limited, retrying shortly" text could
+// never appear, even while every cover provider's circuit breaker was genuinely open and nothing was
+// progressing). Now driven by the service's own openProviders/totalProviders count (see service.js emit).
+const emitArt = (st) => artStatus.onChange && artStatus.onChange({ found: artFound, queued: st ? st.queued : 0, paused: !!(st && st.queued && st.totalProviders && st.openProviders >= st.totalProviders), offline: !navigator.onLine });
 const coverSvc = createCovers((st) => { artLast = st; artFound = Object.values(st.stats).reduce((n, x) => n + x.hits, 0); emitArt(st); }, (name) => keyOf(name));
 const artPriority = (h) => (h === true ? 0 : h || 1);
 export const Art = {
@@ -690,10 +709,19 @@ Art.status.onChange = (s) => {
 
 const undoStack = [];
 const syncUndo = () => { $('#undoBtn').disabled = !undoStack.length; };
+// Cross-device ownership sync (user report: "tick something on another device, it should get ticked
+// everywhere, there must be a copy of the list that gets updated"). This file owns the ownership map
+// (S.ownMap) and is the one place every tick/untick ultimately passes through, but it has no business
+// knowing *how* that gets pushed to a cloud drive — js/ui/extras.js (which already owns the OAuth drive
+// connections) subscribes here and pushes a debounced copy to the connected provider, same separation of
+// concerns as onAlbumRemoved above.
+let ownChangeHook = null;
+export const onOwnChange = (fn) => { ownChangeHook = fn; };
 function applyOwn(pairs) {
   for (const [a, v] of pairs) { if (v === undefined) delete S.ownMap[a.id]; else S.ownMap[a.id] = v; paintOwned(a); }
   lsSet('crate.own.v2', JSON.stringify(S.ownMap)); renderStats();
   clearTimeout(recTimer); recTimer = setTimeout(renderRecs, 1500); if (sheetAlbum) fillSheetOwn();
+  ownChangeHook?.();
 }
 export function commitOwn(changes) {
   const prev = changes.map(([a]) => [a, a.id in S.ownMap ? S.ownMap[a.id] : undefined]);
@@ -920,8 +948,10 @@ function renderModelList(ids) {
   if (!ids.length) { aiModelList.hidden = true; return; }
   for (const id of ids) {
     const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'option'); b.textContent = id;
+    b.setAttribute('aria-selected', String(id === aiEl.model.value));
     b.addEventListener('click', () => {
-      aiEl.model.value = id; aiModelList.hidden = true;
+      aiEl.model.value = id;
+      aiModelList.querySelectorAll('button').forEach((x) => x.setAttribute('aria-selected', String(x === b)));
       const model = aiEl.model.value.trim(); if (model) validateKey(aiEl.prov.value, aiEl.key.value.trim(), model);
       aiEl.model.focus();
     });
@@ -929,16 +959,40 @@ function renderModelList(ids) {
   }
   aiModelList.hidden = false;
 }
+/**
+ * Fix (user report, "fetch fails/doesn't show model names, I'm left helpless"): every outcome below used
+ * to surface ONLY as a `toast()`, which auto-dismisses in a couple of seconds — if the person looked back
+ * at the dialog a moment later (or the toast queued behind another one) there was nothing left explaining
+ * what happened, and an empty key silently did nothing but pop a toast that's easy to miss while looking at
+ * the Model field. Every branch now also writes a persistent message into the dialog itself via
+ * setAiStatus(), and a successful fetch auto-fills the Model field with its first result (the common case —
+ * "list, then let me tweak if I want a different one" — instead of requiring a click before Save is even
+ * usable) rather than leaving it on the "Use Fetch to list models" placeholder until the person clicks one.
+ */
 $('#aiFetch').addEventListener('click', async () => {
   const p = aiEl.prov.value, P = PROVIDERS[p], btn = $('#aiFetch'); busy(btn, true, 'Fetch');
-  if (!P.nokey && !aiEl.key.value.trim()) { toast('Enter an API key first'); busy(btn, false, 'Fetch'); return; }
+  if (!P.nokey && !aiEl.key.value.trim()) {
+    setAiStatus('error', 'Enter an API key above first, then press Fetch.');
+    toast('Enter an API key first'); busy(btn, false, 'Fetch'); return;
+  }
+  setAiStatus('checking', `Fetching ${P.n} models…`);
   try {
     const ids = await listModels(p, aiEl.key.value.trim());
     $('#aiModels').replaceChildren(...ids.map((id) => { const o = document.createElement('option'); o.value = id; return o; }));
     renderModelList(ids);
-    if (!ids.length) toast(`${P.n} returned no models for this key. Double-check the key, or the model id manually.`);
-    else toast(`${ids.length} model${ids.length === 1 ? '' : 's'} found — pick one below`);
-  } catch (e) { aiModelList.hidden = true; toast(`Could not list ${P.n} models: ${String(e.message || e).slice(0, 140)}`); }
+    if (!ids.length) {
+      setAiStatus('error', `${P.n} returned no models for this key. Double-check the key, or type the model id manually.`);
+      toast(`${P.n} returned no models for this key. Double-check the key, or the model id manually.`);
+    } else {
+      if (!aiEl.model.value.trim()) aiEl.model.value = ids[0];
+      setAiStatus('ok', `${ids.length} model${ids.length === 1 ? '' : 's'} found — "${aiEl.model.value}" filled in, or pick another below.`);
+      toast(`${ids.length} model${ids.length === 1 ? '' : 's'} found — pick one below`);
+    }
+  } catch (e) {
+    aiModelList.hidden = true;
+    const msg = `Could not list ${P.n} models: ${String(e.message || e).slice(0, 140)}`;
+    setAiStatus('error', msg); toast(msg);
+  }
   finally { busy(btn, false, 'Fetch'); }
 });
 $('#aiTest').addEventListener('click', async () => {

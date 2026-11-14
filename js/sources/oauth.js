@@ -4,7 +4,10 @@ export const challengeOf = async (verifier) => b64url(await crypto.subtle.digest
 
 /** flow 'pkce': authorization code + PKCE, token exchange from the browser. flow 'implicit': token returned in the URL fragment. */
 export const OAUTH = {
-  dropbox: { label: 'Dropbox', flow: 'pkce', authUrl: 'https://www.dropbox.com/oauth2/authorize', tokenUrl: 'https://api.dropboxapi.com/oauth2/token', scope: 'files.metadata.read files.content.read' },
+  // files.content.write added alongside the existing read scopes so ownership ticks can be written back
+  // to a small sidecar file next to the synced album list (see js/sources/own-sync.js) — the album list
+  // itself stays read-only/one-directional, only the ownership sidecar is ever written by this app.
+  dropbox: { label: 'Dropbox', flow: 'pkce', authUrl: 'https://www.dropbox.com/oauth2/authorize', tokenUrl: 'https://api.dropboxapi.com/oauth2/token', scope: 'files.metadata.read files.content.read files.content.write' },
   onedrive: { label: 'Microsoft OneDrive', flow: 'pkce', authUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize', tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token', scope: 'Files.Read' },
   google: { label: 'Google Drive', flow: 'implicit', authUrl: 'https://accounts.google.com/o/oauth2/v2/auth', scope: 'https://www.googleapis.com/auth/drive.readonly' },
   pcloud: { label: 'pCloud', flow: 'implicit', authUrl: 'https://my.pcloud.com/oauth2/authorize' },

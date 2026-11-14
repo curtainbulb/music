@@ -25,7 +25,13 @@ export function createCoverService({ providers, cache, concurrency = 5, threshol
   let queue = [], active = 0, idleScheduled = false, idleOpen = false;
   const running = new Set(); // waiters currently in run(), for jump-priority preemption
   const stats = Object.fromEntries(providers.map((p) => [p.name, { hits: 0, misses: 0, errors: 0 }]));
-  const emit = () => onChange({ queued: queue.length, active, stats });
+  /** Count of providers whose circuit breaker is currently open (cooling down after repeated failures), at
+   * the moment of this emit. Exposed so the UI can tell "stalled because every provider is backing off"
+   * apart from "stalled because nothing is queued yet" or "idle-tier work deferred on purpose" — the
+   * footer's "rate-limited, retrying shortly" message (js/main.js) previously had no real signal to key off
+   * and was hardcoded to never show, which left a genuinely paused queue looking identical to a working one. */
+  const openProviderCount = () => providers.reduce((n, p) => n + (p.limiter.isOpen() ? 1 : 0), 0);
+  const emit = () => onChange({ queued: queue.length, active, stats, openProviders: openProviderCount(), totalProviders: providers.length });
 
   /** One title candidate against every provider; returns {url} on a confident hit, or null plus any
    * near-misses it saw (collected by the caller) when nothing cleared the threshold. */

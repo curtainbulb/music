@@ -1,4 +1,5 @@
 import { importText, detectFormat, parseDelimited, applyImport } from '../js/parser/formats.js';
+import { parseEntry } from '../js/parser/text.js';
 import { toCsv, toMarkdown, toJson } from '../js/parser/export.js';
 import { normalizeShareUrl } from '../js/sources/links.js';
 import { diffAlbums, hasDiff, summarize } from '../js/ui/patch.js';
@@ -187,5 +188,37 @@ export const parserCases = [
       new Promise((_, reject) => setTimeout(() => reject(new Error('jump request never got a slot (no preemption)')), 400)),
     ]);
     eq(jumpResult, 'https://example.com/cover.jpg', 'the clicked album\'s own cover resolves even though both slots were full of hung background requests');
+  }],
+  ['parseEntry: em dash as the artist/title separator itself is now read ("Artist — Title")', () => {
+    eq(parseEntry('Bauhaus — In the Flat Field'), { artist: 'Bauhaus', title: 'In the Flat Field', year: null, sub: null, owned: null });
+  }],
+  ['parseEntry: em dash sub-genre prefix still works ahead of the new bare em-dash form ("Sub — Artist - Title")', () => {
+    eq(parseEntry('Gothic Rock — Bauhaus - In the Flat Field (1980)'), { artist: 'Bauhaus', title: 'In the Flat Field', year: 1980, sub: 'Gothic Rock', owned: null });
+  }],
+  ['parseEntry: colon separator ("Artist: Title")', () => {
+    eq(parseEntry('Fleetwood Mac: Rumours (1977)'), { artist: 'Fleetwood Mac', title: 'Rumours', year: 1977, sub: null, owned: null });
+  }],
+  ['parseEntry: reversed "Title by Artist" form, tried only after dash/colon forms fail', () => {
+    eq(parseEntry('Abbey Road by The Beatles (1969)'), { artist: 'The Beatles', title: 'Abbey Road', year: 1969, sub: null, owned: null });
+  }],
+  ['parseEntry: a dash-form line containing the word "by" in the title is not misread as "Title by Artist"', () => {
+    eq(parseEntry('Public Enemy - It Takes a Nation of Millions to Hold Us Back (1988)'),
+      { artist: 'Public Enemy', title: 'It Takes a Nation of Millions to Hold Us Back', year: 1988, sub: null, owned: null });
+  }],
+  ['parseEntry: still rejects a line with no recognisable separator at all', () => {
+    eq(parseEntry('just some unstructured text with no structure'), null);
+  }],
+  ['importText: a mixed-separator .md file (dash, em dash, colon, "by") imports every line, none skipped', () => {
+    const text = [
+      '# Rock',
+      '- Bauhaus - In the Flat Field (1980)',
+      '- Joy Division — Unknown Pleasures (1979)',
+      '- Fleetwood Mac: Rumours (1977)',
+      '- Abbey Road by The Beatles (1969)',
+    ].join('\n');
+    const r = importText('mixed.md', text);
+    eq(r.skipped.length, 0, 'nothing skipped');
+    eq(r.albums.length, 4, 'all four differently-separated lines produced an album');
+    eq(r.albums.map((a) => a.artist).sort(), ['Bauhaus', 'Fleetwood Mac', 'Joy Division', 'The Beatles'].sort());
   }],
 ];
